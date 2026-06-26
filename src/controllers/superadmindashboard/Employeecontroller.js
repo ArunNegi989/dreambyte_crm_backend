@@ -1,20 +1,19 @@
-const bcrypt = require("bcryptjs");
 const Employee = require("../../models/superadmindashboard/Employeemodel");
 
-// Auto-generate unique Employee ID
+// ─── Helper: Auto-generate Employee ID ───────────────────────────────────────
 const generateEmployeeId = async (dob) => {
   const year = new Date(dob).getFullYear();
   const base = `DBS-2021-${year}`;
 
-  // Check how many with same base exist, add suffix if needed
   const count = await Employee.countDocuments({
     employeeId: { $regex: `^${base}` },
   });
 
-  return count === 0 ? base : `${base}-${count + 1}`;
+  const suffix = String(count + 1).padStart(3, "0");
+  return `${base}-${suffix}`;
 };
 
-// ─── CREATE ─────────────────────────────────────────────────────────────────
+// ─── CREATE ──────────────────────────────────────────────────────────────────
 exports.createEmployee = async (req, res) => {
   try {
     const { name, email, phone, dob, department, role, password } = req.body;
@@ -26,7 +25,6 @@ exports.createEmployee = async (req, res) => {
       });
     }
 
-    // Check duplicate email
     const existing = await Employee.findOne({ email });
     if (existing) {
       return res.status(409).json({
@@ -51,20 +49,34 @@ exports.createEmployee = async (req, res) => {
       isActive: true,
     });
 
+    // Return employee data + plain password (shown once in UI)
     res.status(201).json({
       success: true,
       message: "Employee created successfully",
+      plainPassword: password,
       data: {
+        _id: employee._id,
         employeeId: employee.employeeId,
-        password: req.body.password, // plain password returned once for display
         name: employee.name,
         email: employee.email,
+        phone: employee.phone,
+        dob: employee.dob,
         department: employee.department,
         role: employee.role,
         joinDate: employee.joinDate,
+        isActive: employee.isActive,
+        createdAt: employee.createdAt,
+        updatedAt: employee.updatedAt,
       },
     });
   } catch (error) {
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      return res.status(400).json({
+        success: false,
+        message: `${field === "email" ? "Email" : "Employee ID"} already exists`,
+      });
+    }
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -88,7 +100,9 @@ exports.getEmployee = async (req, res) => {
     const employee = await Employee.findById(req.params.id).select("-password");
 
     if (!employee) {
-      return res.status(404).json({ success: false, message: "Employee not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Employee not found" });
     }
 
     res.json({ success: true, data: employee });
@@ -109,11 +123,23 @@ exports.updateEmployee = async (req, res) => {
     ).select("-password");
 
     if (!employee) {
-      return res.status(404).json({ success: false, message: "Employee not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Employee not found" });
     }
 
-    res.json({ success: true, message: "Employee updated successfully", data: employee });
+    res.json({
+      success: true,
+      message: "Employee updated successfully",
+      data: employee,
+    });
   } catch (error) {
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: "Email already in use by another employee",
+      });
+    }
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -124,7 +150,9 @@ exports.deleteEmployee = async (req, res) => {
     const employee = await Employee.findByIdAndDelete(req.params.id);
 
     if (!employee) {
-      return res.status(404).json({ success: false, message: "Employee not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Employee not found" });
     }
 
     res.json({ success: true, message: "Employee deleted successfully" });
