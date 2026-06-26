@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 
-const routes = require("./routes");
+const employeeRoutes = require("./routes/employeedashboard/index");
 
 const app = express();
 
@@ -18,7 +18,8 @@ app.get("/", (req, res) => {
   });
 });
 
+
 // API Routes
-app.use("/api", routes);
+app.use("/api", employeeRoutes);
 
 module.exports = app;
