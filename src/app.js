@@ -1,20 +1,11 @@
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
-const connectDB = require('./config/db');
 require('dotenv').config();
 
 const app = express();
 
-// ── Connect DB ────────────────────────────────────────────────────────────────
-connectDB();
-
-// ── Middlewares ───────────────────────────────────────────────────────────────
-app.use(cookieParser()); // MUST be before routes so req.cookies is populated
-app.use(cors({
-  origin: true,
-  credentials: true,
-}));
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -27,6 +18,11 @@ app.get('/', (req, res) => {
 app.use('/api/employee',   require('./routes/employeedashboard/index'));
 app.use('/api/superadmin', require('./routes/superadmindashboard/index'));
 // app.use('/api/admin',   require('./routes/admindashboard/index'));
+
+// ── Shortcut aliases ──────────────────────────────────────────────────────────
+app.use('/api/brands',    require('./routes/superadmindashboard/brandroutes'));
+app.use('/api/employees', require('./routes/superadmindashboard/Employeeroutes'));
+app.use('/api/tasks',     require('./routes/superadmindashboard/Taskroutes'));
 
 // ── 404 ───────────────────────────────────────────────────────────────────────
 app.use((req, res) => {
