@@ -1,21 +1,15 @@
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
-const connectDB = require('./config/db');
 require('dotenv').config();
 
 const app = express();
 
-app.use(
-  cors({
-   origin: true,
-    credentials: true,
-  })
-);
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ── Health check ─────────────────────────────────────────────────────────────
+// ── Health check ──────────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.status(200).json({ success: true, message: 'API is running...' });
 });
@@ -23,7 +17,12 @@ app.get('/', (req, res) => {
 // ── API Routes ────────────────────────────────────────────────────────────────
 app.use('/api/employee',   require('./routes/employeedashboard/index'));
 app.use('/api/superadmin', require('./routes/superadmindashboard/index'));
-// app.use('/api/admin',   require('./routes/admindashboard/index'));  // add when ready
+// app.use('/api/admin',   require('./routes/admindashboard/index'));
+
+// ── Shortcut aliases ──────────────────────────────────────────────────────────
+app.use('/api/brands',    require('./routes/superadmindashboard/brandroutes'));
+app.use('/api/employees', require('./routes/superadmindashboard/Employeeroutes'));
+app.use('/api/tasks',     require('./routes/superadmindashboard/Taskroutes'));
 
 // ── 404 ───────────────────────────────────────────────────────────────────────
 app.use((req, res) => {
