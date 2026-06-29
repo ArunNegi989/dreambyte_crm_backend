@@ -63,4 +63,9 @@ employeeSchema.pre("save", async function () {
   this.password = await bcrypt.hash(this.password, salt);
 });
 
+
+employeeSchema.methods.matchPassword = async function (enteredPassword) {
+  return await bcrypt.compare(enteredPassword, this.password);
+};
+
 module.exports = mongoose.model("Employee", employeeSchema);
