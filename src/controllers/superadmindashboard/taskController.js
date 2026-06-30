@@ -99,10 +99,10 @@ exports.updateTask = async (req, res) => {
       task.status = status;
 
       // ── REJECTED / CHANGES_REQUESTED: both push into changes[] as a
-      // single source of truth. Employee sees this in the Change Log,
-      // and can write their own employeeResponse against the SAME entry.
-      // No separate "Add Note" entry gets created for rejection — the
-      // reject remark itself becomes the change-log entry.
+      // single source of truth. This entry stays resolved: false on
+      // purpose — it's an open note the employee MUST reply to before
+      // they can resubmit. It only flips to resolved once the employee
+      // answers it via respondToChanges().
       if (status === "rejected" || status === "changes_requested") {
         const hasRemarkText = rejectRemark && rejectRemark.trim().length > 0;
         const actor = changedBy || "Super Admin";
@@ -121,6 +121,10 @@ exports.updateTask = async (req, res) => {
 
         // Keep rejectRemark field in sync too (legacy/simple display use).
         task.rejectRemark = hasRemarkText ? rejectRemark : task.rejectRemark || "";
+
+        // Reopen delivery so the employee's modal switches back into the
+        // "reply to admin notes" flow instead of looking already-delivered.
+        task.deliveryStatus = "not_delivered";
       }
 
       // If status moves away from "rejected", clear the simple remark
@@ -141,6 +145,7 @@ exports.updateTask = async (req, res) => {
           changedAt: new Date().toISOString().split("T")[0],
           resolved: false,
         });
+        task.deliveryStatus = "not_delivered";
       }
     }
 
@@ -154,7 +159,7 @@ exports.updateTask = async (req, res) => {
   }
 };
 
-// ─── SUBMIT (employee submits their task) ─────────────────────────────────────
+// ─── SUBMIT (employee submits their task — first time / fresh submission) ────
 exports.submitTask = async (req, res) => {
   try {
     const { deliveryState, deliveryNote, startedAt } = req.body;
@@ -167,10 +172,15 @@ exports.submitTask = async (req, res) => {
     task.deliveredAt    = new Date().toISOString().split("T")[0];
     task.status         = "completed";
 
+    // IMPORTANT: resolved: true here. This is just a history log of the
+    // employee's own submission, NOT an open note waiting for a reply.
+    // If left unresolved, TaskModal treats it as an open change request
+    // and lets the employee keep re-writing the same remark forever.
     task.changes.push({
       changedBy: req.user?.name || "Employee",
       note: `Task submitted. ${deliveryNote ? "Note: " + deliveryNote : ""}`.trim(),
       changedAt: new Date().toISOString().split("T")[0],
+      resolved: true,
     });
 
     await task.save();
@@ -181,7 +191,7 @@ exports.submitTask = async (req, res) => {
   }
 };
 
-// ─── RESPOND TO CHANGES (employee responds to admin change requests) ───────────
+// ─── RESPOND TO CHANGES (employee replies to admin/SA rejection notes) ───────
 exports.respondToChanges = async (req, res) => {
   try {
     const { deliveryState, remarks, responses } = req.body;
@@ -194,15 +204,20 @@ exports.respondToChanges = async (req, res) => {
         const change = task.changes.id(id);
         if (change) {
           change.employeeResponse = response;
-          change.resolved = true;
+          change.resolved = true; // closes the open note, won't reappear as editable
         }
       });
     }
 
-    task.deliveryStatus = deliveryState === "delivered" ? "delivered" : "not_delivered";
+    // This flow has no delivery toggle in the UI — replying to every open
+    // note and resubmitting always means "delivered again". Don't trust
+    // the deliveryState the frontend echoes back (it's stale from before
+    // the rejection reset it to not_delivered).
+    task.deliveryStatus = "delivered";
     task.deliveryNote   = remarks || "";
     task.deliveredAt    = new Date().toISOString().split("T")[0];
     task.status         = "completed";
+    task.rejectRemark   = ""; // clear stale rejection banner now that it's fixed
 
     await task.save();
     const populated = await populateTask(Task.findById(task._id));
@@ -231,7 +246,7 @@ exports.getDashboardStats = async (req, res) => {
       overall: {
         totalAssigned:     allTasks.length,
         pending:           count((t) => t.status === "pending"),
-        changes_requested: count((t) => t.status === "changes_requested"),
+        changes_requested: count((t) => t.status === "changes_requested" || t.status === "rejected"),
         completed:         count((t) => t.status === "completed"),
         approved:          count((t) => t.status === "approved"),
         notDelivered:      count((t) => t.deliveryStatus === "not_delivered"),
@@ -254,7 +269,7 @@ exports.getDashboardStats = async (req, res) => {
   }
 };
 
-// ─── DELIVER ──────────────────────────────────────────────────────────────────
+// ─── DELIVER (standalone "Mark Delivered" button — SATasks/TaskTable) ────────
 exports.deliverTask = async (req, res) => {
   try {
     const { deliveryNote } = req.body;
@@ -266,10 +281,12 @@ exports.deliverTask = async (req, res) => {
     task.deliveredAt    = new Date().toISOString().split("T")[0];
     task.deliveryNote   = deliveryNote || "";
 
+    // Same reasoning as submitTask: this is a log entry, not an open note.
     task.changes.push({
       changedBy: "Employee",
       note: `Task marked as delivered. ${deliveryNote ? "Note: " + deliveryNote : ""}`.trim(),
       changedAt: new Date().toISOString().split("T")[0],
+      resolved: true,
     });
 
     await task.save();
@@ -280,7 +297,7 @@ exports.deliverTask = async (req, res) => {
   }
 };
 
-// ─── ADD CHANGE LOG ───────────────────────────────────────────────────────────
+// ─── ADD CHANGE LOG (manual note from admin/SA, not tied to a status change) ─
 exports.addChange = async (req, res) => {
   try {
     const { note, changedBy } = req.body;
@@ -293,6 +310,7 @@ exports.addChange = async (req, res) => {
       changedBy: changedBy || "Super Admin",
       note,
       changedAt: new Date().toISOString().split("T")[0],
+      resolved: false, // this IS meant to be an open note awaiting employee reply
     });
 
     await task.save();
