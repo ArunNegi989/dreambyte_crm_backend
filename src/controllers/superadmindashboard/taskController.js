@@ -35,20 +35,16 @@ exports.createTask = async (req, res) => {
 };
 
 // ─── GET ALL ──────────────────────────────────────────────────────────────────
-// For employee: automatically filters by their own ID from JWT
-// For superadmin: can pass ?assignedTo=id or see all
 exports.getTasks = async (req, res) => {
   try {
     const filter = {};
 
-    // If employee role — only show their own tasks
-    if (req.user?.role === 'employee') {
+    if (req.user?.role === "employee") {
       filter.assignedTo = req.user.id;
     } else if (req.query.assignedTo) {
       filter.assignedTo = req.query.assignedTo;
     }
 
-    // Optional filters
     if (req.query.status) filter.status = req.query.status;
     if (req.query.brand)  filter.brandId = req.query.brand;
     if (req.query.date)   filter.dueDate = req.query.date;
@@ -74,17 +70,59 @@ exports.getTask = async (req, res) => {
 // ─── UPDATE ───────────────────────────────────────────────────────────────────
 exports.updateTask = async (req, res) => {
   try {
-    const { title, description, assignedTo, brandId, frequency, dueDate, status, rejectRemark } = req.body;
+    const {
+      title,
+      description,
+      assignedTo,
+      brandId,
+      frequency,
+      dueDate,
+      status,
+      rejectRemark,
+    } = req.body;
 
     const updateFields = {};
-    if (title !== undefined)        updateFields.title = title;
-    if (description !== undefined)  updateFields.description = description;
-    if (assignedTo !== undefined)   updateFields.assignedTo = assignedTo;
-    if (brandId !== undefined)      updateFields.brandId = brandId || null;
-    if (frequency !== undefined)    updateFields.frequency = frequency;
-    if (dueDate !== undefined)      updateFields.dueDate = dueDate;
-    if (status !== undefined)       updateFields.status = status;
-    if (rejectRemark !== undefined) updateFields.rejectRemark = rejectRemark;
+    if (title !== undefined)       updateFields.title = title;
+    if (description !== undefined) updateFields.description = description;
+    if (assignedTo !== undefined)  updateFields.assignedTo = assignedTo;
+    if (brandId !== undefined)     updateFields.brandId = brandId || null;
+    if (frequency !== undefined)   updateFields.frequency = frequency;
+    if (dueDate !== undefined)     updateFields.dueDate = dueDate;
+    if (status !== undefined)      updateFields.status = status;
+
+    // ─── Status-based delivery state logic ────────────────────────────────────
+    // Admin/superadmin ne status change kiya toh deliveryStatus bhi update hoga
+    if (status !== undefined) {
+      if (status === "rejected") {
+        // Reject hone pe delivery reset — employee ne deliver kiya tha vo count nahi
+        updateFields.deliveryStatus = "not_delivered";
+        updateFields.deliveryNote   = "";
+        updateFields.deliveredAt    = null;
+        // rejectRemark save karo
+        updateFields.rejectRemark   = rejectRemark || "";
+      } else if (status === "changes_requested") {
+        // Changes maange hain — delivery reset, employee dobara submit karega
+        updateFields.deliveryStatus = "not_delivered";
+        updateFields.deliveryNote   = "";
+        updateFields.deliveredAt    = null;
+        updateFields.rejectRemark   = rejectRemark || "";
+      } else if (status === "approved") {
+        // Approved hone pe delivery confirmed
+        updateFields.deliveryStatus = "delivered";
+        updateFields.rejectRemark   = ""; // clear any old remark
+      } else if (status === "pending") {
+        // Manually pending pe wapas — reset karo
+        updateFields.deliveryStatus = "not_delivered";
+        updateFields.deliveryNote   = "";
+        updateFields.deliveredAt    = null;
+        updateFields.rejectRemark   = "";
+      }
+      // status === "completed" → employee ne submit kiya, deliveryStatus wahi rahega jo submitTask ne set kiya
+    } else {
+      // Status change nahi ho raha, sirf rejectRemark update ho sakta hai
+      if (rejectRemark !== undefined) updateFields.rejectRemark = rejectRemark;
+    }
+    // ──────────────────────────────────────────────────────────────────────────
 
     const task = await populateTask(
       Task.findByIdAndUpdate(req.params.id, updateFields, { new: true, runValidators: true })
@@ -98,8 +136,6 @@ exports.updateTask = async (req, res) => {
 };
 
 // ─── SUBMIT (employee submits their task) ─────────────────────────────────────
-// POST /api/employee/tasks/:id/submit
-// Body: { deliveryState, deliveryNote, startedAt }
 exports.submitTask = async (req, res) => {
   try {
     const { deliveryState, deliveryNote, startedAt } = req.body;
@@ -107,15 +143,15 @@ exports.submitTask = async (req, res) => {
     const task = await Task.findById(req.params.id);
     if (!task) return res.status(404).json({ success: false, message: "Task not found" });
 
-    task.deliveryStatus = deliveryState === 'delivered' ? 'delivered' : 'not_delivered';
-    task.deliveryNote   = deliveryNote || '';
-    task.deliveredAt    = new Date().toISOString().split('T')[0];
-    task.status         = 'completed';
+    task.deliveryStatus = deliveryState === "delivered" ? "delivered" : "not_delivered";
+    task.deliveryNote   = deliveryNote || "";
+    task.deliveredAt    = new Date().toISOString().split("T")[0];
+    task.status         = "completed";
 
     task.changes.push({
-      changedBy: req.user?.name || 'Employee',
-      note: `Task submitted. ${deliveryNote ? 'Note: ' + deliveryNote : ''}`.trim(),
-      changedAt: new Date().toISOString().split('T')[0],
+      changedBy: req.user?.name || "Employee",
+      note: `Task submitted. ${deliveryNote ? "Note: " + deliveryNote : ""}`.trim(),
+      changedAt: new Date().toISOString().split("T")[0],
     });
 
     await task.save();
@@ -127,8 +163,6 @@ exports.submitTask = async (req, res) => {
 };
 
 // ─── RESPOND TO CHANGES (employee responds to admin change requests) ───────────
-// POST /api/employee/tasks/:id/respond
-// Body: { deliveryState, remarks, responses: [{ id, response }] }
 exports.respondToChanges = async (req, res) => {
   try {
     const { deliveryState, remarks, responses } = req.body;
@@ -136,7 +170,6 @@ exports.respondToChanges = async (req, res) => {
     const task = await Task.findById(req.params.id);
     if (!task) return res.status(404).json({ success: false, message: "Task not found" });
 
-    // Apply employee responses to matching change entries by _id
     if (Array.isArray(responses)) {
       responses.forEach(({ id, response }) => {
         const change = task.changes.id(id);
@@ -147,10 +180,10 @@ exports.respondToChanges = async (req, res) => {
       });
     }
 
-    task.deliveryStatus = deliveryState === 'delivered' ? 'delivered' : 'not_delivered';
-    task.deliveryNote   = remarks || '';
-    task.deliveredAt    = new Date().toISOString().split('T')[0];
-    task.status         = 'completed';
+    task.deliveryStatus = deliveryState === "delivered" ? "delivered" : "not_delivered";
+    task.deliveryNote   = remarks || "";
+    task.deliveredAt    = new Date().toISOString().split("T")[0];
+    task.status         = "completed";
 
     await task.save();
     const populated = await populateTask(Task.findById(task._id));
@@ -161,17 +194,16 @@ exports.respondToChanges = async (req, res) => {
 };
 
 // ─── DASHBOARD STATS (employee) ───────────────────────────────────────────────
-// GET /api/employee/stats
 exports.getDashboardStats = async (req, res) => {
   try {
     const employeeId = req.user.id;
     const allTasks   = await Task.find({ assignedTo: employeeId });
 
-    const today    = new Date().toISOString().split('T')[0];
+    const today     = new Date().toISOString().split("T")[0];
     const weekStart = new Date();
     weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-    const weekStr  = weekStart.toISOString().split('T')[0];
-    const monthStr = today.slice(0, 7); // "YYYY-MM"
+    const weekStr   = weekStart.toISOString().split("T")[0];
+    const monthStr  = today.slice(0, 7);
 
     const count = (pred) => allTasks.filter(pred).length;
 
@@ -179,23 +211,23 @@ exports.getDashboardStats = async (req, res) => {
       success: true,
       overall: {
         totalAssigned:     allTasks.length,
-        pending:           count(t => t.status === 'pending'),
-        changes_requested: count(t => t.status === 'changes_requested'),
-        completed:         count(t => t.status === 'completed'),
-        approved:          count(t => t.status === 'approved'),
-        notDelivered:      count(t => t.deliveryStatus === 'not_delivered'),
+        pending:           count((t) => t.status === "pending"),
+        changes_requested: count((t) => t.status === "changes_requested"),
+        completed:         count((t) => t.status === "completed"),
+        approved:          count((t) => t.status === "approved"),
+        notDelivered:      count((t) => t.deliveryStatus === "not_delivered"),
       },
       today: {
-        total:     count(t => t.dueDate === today),
-        completed: count(t => t.dueDate === today && t.status === 'completed'),
+        total:     count((t) => t.dueDate === today),
+        completed: count((t) => t.dueDate === today && t.status === "completed"),
       },
       thisWeek: {
-        total:     count(t => t.dueDate >= weekStr),
-        completed: count(t => t.dueDate >= weekStr && t.status === 'completed'),
+        total:     count((t) => t.dueDate >= weekStr),
+        completed: count((t) => t.dueDate >= weekStr && t.status === "completed"),
       },
       thisMonth: {
-        total:     count(t => t.dueDate?.startsWith(monthStr)),
-        completed: count(t => t.dueDate?.startsWith(monthStr) && t.status === 'completed'),
+        total:     count((t) => t.dueDate?.startsWith(monthStr)),
+        completed: count((t) => t.dueDate?.startsWith(monthStr) && t.status === "completed"),
       },
     });
   } catch (error) {
