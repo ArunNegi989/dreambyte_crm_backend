@@ -2,16 +2,18 @@ const mongoose = require("mongoose");
 
 const taskChangeSchema = new mongoose.Schema(
   {
-    changedBy: { type: String, required: true },
-    note: { type: String, required: true },
-    changedAt: { type: String, required: true },
+    changedBy:        { type: String, required: true },
+    note:             { type: String, required: true },
+    changedAt:        { type: String, required: true },
+    resolved:         { type: Boolean, default: false },
+    employeeResponse: { type: String, default: '' },
   },
   { _id: true }
 );
 
 const taskSchema = new mongoose.Schema(
   {
-    title: { type: String, required: true, trim: true },
+    title:       { type: String, required: true, trim: true },
     description: { type: String, default: "", trim: true },
     assignedTo: {
       type: mongoose.Schema.Types.ObjectId,
@@ -33,10 +35,10 @@ const taskSchema = new mongoose.Schema(
       enum: ["weekly", "monthly", "one_time"],
       default: "one_time",
     },
-    dueDate: { type: String, default: "" },
+    dueDate:       { type: String, default: "" },
     status: {
       type: String,
-      enum: ["pending", "approved", "rejected", "completed"],
+      enum: ["pending", "approved", "rejected", "completed", "changes_requested"],
       default: "pending",
     },
     deliveryStatus: {
@@ -45,12 +47,11 @@ const taskSchema = new mongoose.Schema(
       default: "not_delivered",
     },
     deliveryNote: { type: String, default: "" },
-    deliveredAt: { type: String, default: null },
+    deliveredAt:  { type: String, default: null },
     rejectRemark: { type: String, default: "" },
-    changes: { type: [taskChangeSchema], default: [] },
+    changes:      { type: [taskChangeSchema], default: [] },
   },
   { timestamps: true }
 );
 
-// ← Guard against OverwriteModelError (hot reload / nodemon)
 module.exports = mongoose.models.Task || mongoose.model("Task", taskSchema);
