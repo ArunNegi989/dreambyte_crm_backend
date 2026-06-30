@@ -79,57 +79,57 @@ exports.updateTask = async (req, res) => {
       dueDate,
       status,
       rejectRemark,
+      // Optional: who is making this change. Falls back to "Super Admin" if
+      // not provided, matching the existing addChange() default.
+      changedBy,
     } = req.body;
-
-    const updateFields = {};
-    if (title !== undefined)       updateFields.title = title;
-    if (description !== undefined) updateFields.description = description;
-    if (assignedTo !== undefined)  updateFields.assignedTo = assignedTo;
-    if (brandId !== undefined)     updateFields.brandId = brandId || null;
-    if (frequency !== undefined)   updateFields.frequency = frequency;
-    if (dueDate !== undefined)     updateFields.dueDate = dueDate;
-    if (status !== undefined)      updateFields.status = status;
-
-    // ─── Status-based delivery state logic ────────────────────────────────────
-    // Admin/superadmin ne status change kiya toh deliveryStatus bhi update hoga
-    if (status !== undefined) {
-      if (status === "rejected") {
-        // Reject hone pe delivery reset — employee ne deliver kiya tha vo count nahi
-        updateFields.deliveryStatus = "not_delivered";
-        updateFields.deliveryNote   = "";
-        updateFields.deliveredAt    = null;
-        // rejectRemark save karo
-        updateFields.rejectRemark   = rejectRemark || "";
-      } else if (status === "changes_requested") {
-        // Changes maange hain — delivery reset, employee dobara submit karega
-        updateFields.deliveryStatus = "not_delivered";
-        updateFields.deliveryNote   = "";
-        updateFields.deliveredAt    = null;
-        updateFields.rejectRemark   = rejectRemark || "";
-      } else if (status === "approved") {
-        // Approved hone pe delivery confirmed
-        updateFields.deliveryStatus = "delivered";
-        updateFields.rejectRemark   = ""; // clear any old remark
-      } else if (status === "pending") {
-        // Manually pending pe wapas — reset karo
-        updateFields.deliveryStatus = "not_delivered";
-        updateFields.deliveryNote   = "";
-        updateFields.deliveredAt    = null;
-        updateFields.rejectRemark   = "";
-      }
-      // status === "completed" → employee ne submit kiya, deliveryStatus wahi rahega jo submitTask ne set kiya
-    } else {
-      // Status change nahi ho raha, sirf rejectRemark update ho sakta hai
-      if (rejectRemark !== undefined) updateFields.rejectRemark = rejectRemark;
+ 
+    const task = await Task.findById(req.params.id);
+    if (!task) {
+      return res.status(404).json({ success: false, message: "Task not found" });
     }
-    // ──────────────────────────────────────────────────────────────────────────
-
-    const task = await populateTask(
-      Task.findByIdAndUpdate(req.params.id, updateFields, { new: true, runValidators: true })
-    );
-
-    if (!task) return res.status(404).json({ success: false, message: "Task not found" });
-    res.json({ success: true, message: "Task updated successfully", data: task });
+ 
+    if (title !== undefined) task.title = title;
+    if (description !== undefined) task.description = description;
+    if (assignedTo !== undefined) task.assignedTo = assignedTo;
+    if (brandId !== undefined) task.brandId = brandId || null;
+    if (frequency !== undefined) task.frequency = frequency;
+    if (dueDate !== undefined) task.dueDate = dueDate;
+ 
+    // ── Key fix ────────────────────────────────────────────────────────────
+    // Every time a task is being rejected / sent back for changes, push a
+    // NEW entry into changes[] instead of overwriting a single rejectRemark
+    // string. This preserves full history across multiple reject cycles —
+    // previously only the latest rejection reason ever survived.
+    //
+    // Rejecting with no message is allowed; we still push an entry so the
+    // employee can see "changes were requested" even without explanatory text.
+    if (status !== undefined) {
+      task.status = status;
+ 
+      if (status === "changes_requested") {
+        task.changes.push({
+          changedBy: changedBy || "Super Admin",
+          note: rejectRemark && rejectRemark.trim().length > 0
+            ? rejectRemark
+            : "",
+          changedAt: new Date().toISOString().split("T")[0],
+          resolved: false,
+        });
+      }
+    }
+ 
+    // Keep rejectRemark in sync as "most recent reason" for any legacy code
+    // that still reads it directly, but changes[] is now the real source of truth.
+    if (rejectRemark !== undefined) {
+      task.rejectRemark = rejectRemark;
+    }
+ 
+    await task.save();
+ 
+    const populated = await populateTask(Task.findById(task._id));
+ 
+    res.json({ success: true, message: "Task updated successfully", data: populated });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
