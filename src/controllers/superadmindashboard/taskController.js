@@ -79,56 +79,75 @@ exports.updateTask = async (req, res) => {
       dueDate,
       status,
       rejectRemark,
-      // Optional: who is making this change. Falls back to "Super Admin" if
-      // not provided, matching the existing addChange() default.
+      // Optional: who is making this change (used only for changes_requested).
       changedBy,
     } = req.body;
- 
+
     const task = await Task.findById(req.params.id);
     if (!task) {
       return res.status(404).json({ success: false, message: "Task not found" });
     }
- 
+
     if (title !== undefined) task.title = title;
     if (description !== undefined) task.description = description;
     if (assignedTo !== undefined) task.assignedTo = assignedTo;
     if (brandId !== undefined) task.brandId = brandId || null;
     if (frequency !== undefined) task.frequency = frequency;
     if (dueDate !== undefined) task.dueDate = dueDate;
- 
-    // ── Key fix ────────────────────────────────────────────────────────────
-    // Every time a task is being rejected / sent back for changes, push a
-    // NEW entry into changes[] instead of overwriting a single rejectRemark
-    // string. This preserves full history across multiple reject cycles —
-    // previously only the latest rejection reason ever survived.
-    //
-    // Rejecting with no message is allowed; we still push an entry so the
-    // employee can see "changes were requested" even without explanatory text.
+
     if (status !== undefined) {
       task.status = status;
- 
-      if (status === "changes_requested") {
+
+      // ── REJECTED / CHANGES_REQUESTED: both push into changes[] as a
+      // single source of truth. Employee sees this in the Change Log,
+      // and can write their own employeeResponse against the SAME entry.
+      // No separate "Add Note" entry gets created for rejection — the
+      // reject remark itself becomes the change-log entry.
+      if (status === "rejected" || status === "changes_requested") {
+        const hasRemarkText = rejectRemark && rejectRemark.trim().length > 0;
+        const actor = changedBy || "Super Admin";
+
+        if (hasRemarkText) {
+          task.changes.push({
+            changedBy: actor,
+            note:
+              status === "rejected"
+                ? `Rejected by ${actor}: ${rejectRemark}`
+                : rejectRemark,
+            changedAt: new Date().toISOString().split("T")[0],
+            resolved: false,
+          });
+        }
+
+        // Keep rejectRemark field in sync too (legacy/simple display use).
+        task.rejectRemark = hasRemarkText ? rejectRemark : task.rejectRemark || "";
+      }
+
+      // If status moves away from "rejected", clear the simple remark
+      // field so a stale banner doesn't linger (changes[] history stays).
+      if (status !== "rejected") {
+        task.rejectRemark = "";
+      }
+    } else if (rejectRemark !== undefined) {
+      // Status not changing, just editing/saving the remark text directly
+      // (e.g. admin clicks "Save Remark" without touching the status radio).
+      // This also logs a changes[] entry so it's visible to the employee.
+      task.rejectRemark = rejectRemark;
+      if (rejectRemark.trim().length > 0) {
+        const actor = changedBy || "Super Admin";
         task.changes.push({
-          changedBy: changedBy || "Super Admin",
-          note: rejectRemark && rejectRemark.trim().length > 0
-            ? rejectRemark
-            : "",
+          changedBy: actor,
+          note: `Rejected by ${actor}: ${rejectRemark}`,
           changedAt: new Date().toISOString().split("T")[0],
           resolved: false,
         });
       }
     }
- 
-    // Keep rejectRemark in sync as "most recent reason" for any legacy code
-    // that still reads it directly, but changes[] is now the real source of truth.
-    if (rejectRemark !== undefined) {
-      task.rejectRemark = rejectRemark;
-    }
- 
+
     await task.save();
- 
+
     const populated = await populateTask(Task.findById(task._id));
- 
+
     res.json({ success: true, message: "Task updated successfully", data: populated });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
