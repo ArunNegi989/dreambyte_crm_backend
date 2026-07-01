@@ -47,7 +47,16 @@ const taskSchema = new mongoose.Schema(
       default: "not_delivered",
     },
     deliveryNote: { type: String, default: "" },
+
+    // ── Time tracking ──────────────────────────────────────────────────
+    // startedAt is set ONCE, the first time the employee submits the task
+    // (full ISO datetime string, e.g. "2026-06-30T17:19:00"). It is never
+    // overwritten on later reject→fix→resubmit cycles, so "time taken"
+    // (deliveredAt - startedAt) naturally keeps growing across the whole
+    // lifecycle of the task instead of resetting each cycle.
+    startedAt:    { type: String, default: null },
     deliveredAt:  { type: String, default: null },
+
     rejectRemark: { type: String, default: "" },
     changes:      { type: [taskChangeSchema], default: [] },
   },

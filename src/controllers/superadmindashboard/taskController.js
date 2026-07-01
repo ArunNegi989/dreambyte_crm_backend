@@ -169,8 +169,19 @@ exports.submitTask = async (req, res) => {
 
     task.deliveryStatus = deliveryState === "delivered" ? "delivered" : "not_delivered";
     task.deliveryNote   = deliveryNote || "";
-    task.deliveredAt    = new Date().toISOString().split("T")[0];
+    // Full ISO timestamp (not just date) so "time taken" can be computed
+    // down to the minute, even for same-day tasks.
+    task.deliveredAt    = new Date().toISOString();
     task.status         = "completed";
+
+    // Save the employee's reported start time ONLY the first time — this
+    // anchors the "time taken" calculation. If for some reason submitTask
+    // gets called again with an existing startedAt already on record, we
+    // keep the original so total time-taken keeps accumulating correctly
+    // instead of resetting.
+    if (startedAt && !task.startedAt) {
+      task.startedAt = startedAt;
+    }
 
     // IMPORTANT: resolved: true here. This is just a history log of the
     // employee's own submission, NOT an open note waiting for a reply.
@@ -215,7 +226,7 @@ exports.respondToChanges = async (req, res) => {
     // the rejection reset it to not_delivered).
     task.deliveryStatus = "delivered";
     task.deliveryNote   = remarks || "";
-    task.deliveredAt    = new Date().toISOString().split("T")[0];
+    task.deliveredAt    = new Date().toISOString();
     task.status         = "completed";
     task.rejectRemark   = ""; // clear stale rejection banner now that it's fixed
 
@@ -278,7 +289,7 @@ exports.deliverTask = async (req, res) => {
     if (!task) return res.status(404).json({ success: false, message: "Task not found" });
 
     task.deliveryStatus = "delivered";
-    task.deliveredAt    = new Date().toISOString().split("T")[0];
+    task.deliveredAt    = new Date().toISOString();
     task.deliveryNote   = deliveryNote || "";
 
     // Same reasoning as submitTask: this is a log entry, not an open note.
