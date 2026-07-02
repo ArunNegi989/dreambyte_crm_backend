@@ -1,25 +1,35 @@
 const Employee = require('../../models/superadmindashboard/Employeemodel');
 const jwt = require('jsonwebtoken');
 
-const ROLE_REDIRECTS = {
-  employee:    '/dashboard/employeedashboard',
-  admin:       '/dashboard/admindashboard',
-  super_admin: '/dashboard/superadmindashboard',
+// ── Public: check if any superadmin exists ────────────────────────────────────
+// Used by the login page to decide whether to show the "Register as superadmin"
+// button. No auth required — it only returns a boolean, no sensitive data.
+exports.checkSuperAdminExists = async (req, res) => {
+  try {
+    const exists = await Employee.exists({ role: 'super_admin' });
+    res.json({ exists: !!exists });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
 };
 
-// ── Register ─────────────────────────────────────────────────────────────────
+// ── Register ──────────────────────────────────────────────────────────────────
 exports.register = async (req, res) => {
   try {
+    // Block registration if a superadmin already exists
+    const exists = await Employee.exists({ role: 'super_admin' });
+    if (exists) {
+      return res.status(403).json({ message: 'A superadmin already exists. Registration is disabled.' });
+    }
+
     const { employeeId, name, email, phone, dob, department, password, joinDate } = req.body;
 
-    // Validate required fields
     if (!employeeId || !name || !email || !dob || !department || !password || !joinDate)
       return res.status(400).json({ message: 'All fields except phone are required.' });
 
     if (password.length < 6)
       return res.status(400).json({ message: 'Password must be at least 6 characters.' });
 
-    // Check duplicates
     const existingEmail = await Employee.findOne({ email });
     if (existingEmail)
       return res.status(409).json({ message: 'An account with this email already exists.' });
@@ -28,16 +38,10 @@ exports.register = async (req, res) => {
     if (existingId)
       return res.status(409).json({ message: 'An account with this employee ID already exists.' });
 
-    // Create superadmin — password hashing handled by pre-save hook in model
     const superAdmin = await Employee.create({
-      employeeId,
-      name,
-      email,
+      employeeId, name, email,
       phone: phone || '',
-      dob,
-      department,
-      password,
-      joinDate,
+      dob, department, password, joinDate,
       role: 'super_admin',
       isActive: true,
     });
@@ -54,7 +58,6 @@ exports.register = async (req, res) => {
       },
     });
   } catch (err) {
-    // Mongoose duplicate key error
     if (err.code === 11000) {
       const field = Object.keys(err.keyValue)[0];
       return res.status(409).json({ message: `${field} is already in use.` });
@@ -64,6 +67,12 @@ exports.register = async (req, res) => {
 };
 
 // ── Login ─────────────────────────────────────────────────────────────────────
+const ROLE_REDIRECTS = {
+  employee:    '/dashboard/employeedashboard',
+  admin:       '/dashboard/admindashboard',
+  super_admin: '/dashboard/superadmindashboard',
+};
+
 exports.login = async (req, res) => {
   try {
     const { employeeId, password } = req.body;
