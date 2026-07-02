@@ -59,6 +59,16 @@ const taskSchema = new mongoose.Schema(
 
     rejectRemark: { type: String, default: "" },
     changes:      { type: [taskChangeSchema], default: [] },
+
+    // ── Split-task tracking ──────────────────────────────────────────
+    // Set when a Super-Admin task (assigned to an Admin) is broken down
+    // by that Admin into multiple employee-level sub-tasks. Each
+    // sub-task's parentTaskId points back to the original SA→Admin task.
+    // The parent task itself never has an assignedTo of an employee in
+    // this flow — it stays "owned" by the admin until all children are
+    // done, at which point it auto-completes.
+    parentTaskId: { type: mongoose.Schema.Types.ObjectId, ref: "Task", default: null },
+    hasSubtasks:  { type: Boolean, default: false },
   },
   { timestamps: true }
 );

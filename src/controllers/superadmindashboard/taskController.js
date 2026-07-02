@@ -6,6 +6,26 @@ const populateTask = (query) =>
     .populate("assignedTo", "name employeeId department role")
     .populate("brandId", "name");
 
+// ─── Auto-complete parent when all its sub-tasks are done ────────────────────
+// Called after any employee-level sub-task changes status. If every sibling
+// sub-task (same parentTaskId) is "completed", the parent (SA → Admin) task
+// is flipped to completed + delivered automatically, so it shows up as
+// finished on the Super Admin's side without the Admin manually delivering.
+const checkAndAutoCompleteParent = async (parentTaskId) => {
+  if (!parentTaskId) return;
+  const siblings = await Task.find({ parentTaskId });
+  if (siblings.length === 0) return;
+
+  const allDone = siblings.every((t) => t.status === "completed");
+  if (allDone) {
+    await Task.findByIdAndUpdate(parentTaskId, {
+      status: "completed",
+      deliveryStatus: "delivered",
+      deliveredAt: new Date().toISOString(),
+    });
+  }
+};
+
 // ─── CREATE ───────────────────────────────────────────────────────────────────
 exports.createTask = async (req, res) => {
   try {
@@ -45,9 +65,12 @@ exports.getTasks = async (req, res) => {
       filter.assignedTo = req.query.assignedTo;
     }
 
-    if (req.query.status) filter.status = req.query.status;
-    if (req.query.brand)  filter.brandId = req.query.brand;
-    if (req.query.date)   filter.dueDate = req.query.date;
+    if (req.query.status)       filter.status = req.query.status;
+    if (req.query.brand)        filter.brandId = req.query.brand;
+    if (req.query.date)         filter.dueDate = req.query.date;
+    if (req.query.assignedBy)   filter.assignedBy = req.query.assignedBy;
+    if (req.query.parentTaskId) filter.parentTaskId = req.query.parentTaskId;
+    if (req.query.topLevel === "true") filter.parentTaskId = null; // only parent/standalone tasks
 
     const tasks = await populateTask(Task.find(filter).sort({ createdAt: -1 }));
     res.json({ success: true, count: tasks.length, data: tasks });
@@ -151,6 +174,12 @@ exports.updateTask = async (req, res) => {
 
     await task.save();
 
+    // If this task is a sub-task of a bigger SA→Admin task, check whether
+    // its parent should now be auto-marked complete.
+    if (status !== undefined) {
+      await checkAndAutoCompleteParent(task.parentTaskId);
+    }
+
     const populated = await populateTask(Task.findById(task._id));
 
     res.json({ success: true, message: "Task updated successfully", data: populated });
@@ -195,6 +224,11 @@ exports.submitTask = async (req, res) => {
     });
 
     await task.save();
+
+    // Sub-task of a split SA→Admin task? Check if all siblings are done
+    // so the parent can auto-complete.
+    await checkAndAutoCompleteParent(task.parentTaskId);
+
     const populated = await populateTask(Task.findById(task._id));
     res.json({ success: true, message: "Task submitted successfully", data: populated });
   } catch (error) {
@@ -231,6 +265,9 @@ exports.respondToChanges = async (req, res) => {
     task.rejectRemark   = ""; // clear stale rejection banner now that it's fixed
 
     await task.save();
+
+    await checkAndAutoCompleteParent(task.parentTaskId);
+
     const populated = await populateTask(Task.findById(task._id));
     res.json({ success: true, message: "Changes responded successfully", data: populated });
   } catch (error) {
@@ -301,6 +338,9 @@ exports.deliverTask = async (req, res) => {
     });
 
     await task.save();
+
+    await checkAndAutoCompleteParent(task.parentTaskId);
+
     const populated = await populateTask(Task.findById(task._id));
     res.json({ success: true, message: "Task marked as delivered", data: populated });
   } catch (error) {
@@ -327,6 +367,59 @@ exports.addChange = async (req, res) => {
     await task.save();
     const populated = await populateTask(Task.findById(task._id));
     res.json({ success: true, message: "Change added", data: populated });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ─── SPLIT (admin breaks a SA-assigned task into employee sub-tasks) ─────────
+// Body: { subtasks: [{ title, description, assignedTo, dueDate, frequency, brandId? }] }
+// Each entry becomes its own standalone Task document, assignedBy "admin",
+// linked back to the parent via parentTaskId. The parent itself is marked
+// hasSubtasks: true and nudged out of "pending" into "approved" (admin has
+// acted on it). The parent later auto-completes via checkAndAutoCompleteParent
+// once every child reaches "completed".
+exports.splitTask = async (req, res) => {
+  try {
+    const { subtasks } = req.body;
+    if (!Array.isArray(subtasks) || subtasks.length === 0) {
+      return res.status(400).json({ success: false, message: "subtasks array is required" });
+    }
+
+    for (const s of subtasks) {
+      if (!s.title || !s.assignedTo) {
+        return res.status(400).json({
+          success: false,
+          message: "Each subtask requires at least a title and assignedTo",
+        });
+      }
+    }
+
+    const parent = await Task.findById(req.params.id);
+    if (!parent) return res.status(404).json({ success: false, message: "Parent task not found" });
+
+    const created = await Task.insertMany(
+      subtasks.map((s) => ({
+        title: s.title,
+        description: s.description || "",
+        assignedTo: s.assignedTo,
+        assignedBy: "admin",
+        brandId: s.brandId || parent.brandId || null,
+        frequency: s.frequency || parent.frequency || "one_time",
+        dueDate: s.dueDate || "",
+        status: "pending",
+        deliveryStatus: "not_delivered",
+        parentTaskId: parent._id,
+        changes: [],
+      }))
+    );
+
+    parent.hasSubtasks = true;
+    if (parent.status === "pending") parent.status = "approved"; // admin has acted on it
+    await parent.save();
+
+    const populatedChildren = await populateTask(Task.find({ _id: { $in: created.map((c) => c._id) } }));
+    res.status(201).json({ success: true, message: "Task split successfully", data: populatedChildren });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
