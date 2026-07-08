@@ -38,7 +38,10 @@ const taskSchema = new mongoose.Schema(
     dueDate:       { type: String, default: "" },
     status: {
       type: String,
-      enum: ["pending", "approved", "rejected", "completed", "changes_requested"],
+      // "in_progress" added for simple self-tracked workflows (e.g. the
+      // Photography dashboard) that don't go through the full
+      // reject/changes_requested review cycle.
+      enum: ["pending", "approved", "in_progress", "rejected", "completed", "changes_requested"],
       default: "pending",
     },
     deliveryStatus: {
@@ -49,11 +52,6 @@ const taskSchema = new mongoose.Schema(
     deliveryNote: { type: String, default: "" },
 
     // ── Time tracking ──────────────────────────────────────────────────
-    // startedAt is set ONCE, the first time the employee submits the task
-    // (full ISO datetime string, e.g. "2026-06-30T17:19:00"). It is never
-    // overwritten on later reject→fix→resubmit cycles, so "time taken"
-    // (deliveredAt - startedAt) naturally keeps growing across the whole
-    // lifecycle of the task instead of resetting each cycle.
     startedAt:    { type: String, default: null },
     deliveredAt:  { type: String, default: null },
 
@@ -61,14 +59,30 @@ const taskSchema = new mongoose.Schema(
     changes:      { type: [taskChangeSchema], default: [] },
 
     // ── Split-task tracking ──────────────────────────────────────────
-    // Set when a Super-Admin task (assigned to an Admin) is broken down
-    // by that Admin into multiple employee-level sub-tasks. Each
-    // sub-task's parentTaskId points back to the original SA→Admin task.
-    // The parent task itself never has an assignedTo of an employee in
-    // this flow — it stays "owned" by the admin until all children are
-    // done, at which point it auto-completes.
     parentTaskId: { type: mongoose.Schema.Types.ObjectId, ref: "Task", default: null },
     hasSubtasks:  { type: Boolean, default: false },
+
+    // ── Department "Work Type" tag ────────────────────────────────────
+    // Free-text label matching one of data/departmentTasks.ts's entries
+    // (e.g. "Shoots", "Photo Edit", "Video Edit", "Post Design", "UGC"...).
+    // Drives which extra fields below are relevant for a given task.
+    taskType: { type: String, default: "" },
+
+    // ── Photography: Shoots-specific fields ───────────────────────────
+    location:  { type: String, default: "" },   // shoot location
+    time:      { type: String, default: "" },   // shoot time, e.g. "10:30 AM"
+    mediaType: {
+      type: String,
+      enum: ["photo", "video", "both", null],
+      default: null,
+    },
+
+    // ── Photography: Edit-specific fields ─────────────────────────────
+    // totalCount is set once at assignment time (e.g. "40 photos to edit").
+    // completedCount is updated by the photographer as they work through it;
+    // the controller auto-derives status from these two values.
+    totalCount:     { type: Number, default: null },
+    completedCount: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

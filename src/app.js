@@ -23,7 +23,10 @@ app.use('/api/superadmin', require('./routes/superadmindashboard/index'));
 app.use('/api/brands',    require('./routes/superadmindashboard/brandroutes'));
 app.use('/api/employees', require('./routes/superadmindashboard/Employeeroutes'));
 app.use('/api/tasks',     require('./routes/superadmindashboard/Taskroutes'));
-
+app.use(
+  '/api/additional-work',
+  require('./routes/superadmindashboard/additionalWorkRoutes')
+);
 // ── 404 ───────────────────────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ message: `Route ${req.originalUrl} not found` });
