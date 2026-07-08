@@ -7,10 +7,6 @@ const populateTask = (query) =>
     .populate("brandId", "name");
 
 // ─── Auto-complete parent when all its sub-tasks are done ────────────────────
-// Called after any employee-level sub-task changes status. If every sibling
-// sub-task (same parentTaskId) is "completed", the parent (SA → Admin) task
-// is flipped to completed + delivered automatically, so it shows up as
-// finished on the Super Admin's side without the Admin manually delivering.
 const checkAndAutoCompleteParent = async (parentTaskId) => {
   if (!parentTaskId) return;
   const siblings = await Task.find({ parentTaskId });
@@ -29,7 +25,21 @@ const checkAndAutoCompleteParent = async (parentTaskId) => {
 // ─── CREATE ───────────────────────────────────────────────────────────────────
 exports.createTask = async (req, res) => {
   try {
-    const { title, description, assignedTo, assignedBy, brandId, frequency, dueDate } = req.body;
+    const {
+      title,
+      description,
+      assignedTo,
+      assignedBy,
+      brandId,
+      frequency,
+      dueDate,
+      // ── Photography / department-specific fields (were missing before) ──
+      taskType,
+      location,
+      time,
+      mediaType,
+      totalCount,
+    } = req.body;
 
     if (!title || !assignedTo || !assignedBy)
       return res.status(400).json({ success: false, message: "title, assignedTo, and assignedBy are required" });
@@ -45,6 +55,13 @@ exports.createTask = async (req, res) => {
       status: "pending",
       deliveryStatus: "not_delivered",
       changes: [],
+      // ── Photography / department-specific fields ──
+      taskType: taskType || "",
+      location: location || "",
+      time: time || "",
+      mediaType: mediaType || null,
+      totalCount: totalCount !== undefined && totalCount !== "" ? Number(totalCount) : null,
+      completedCount: 0,
     });
 
     const populated = await populateTask(Task.findById(task._id));
@@ -102,8 +119,14 @@ exports.updateTask = async (req, res) => {
       dueDate,
       status,
       rejectRemark,
-      // Optional: who is making this change (used only for changes_requested).
       changedBy,
+      // ── Photography / department-specific fields (were missing before) ──
+      taskType,
+      location,
+      time,
+      mediaType,
+      totalCount,
+      completedCount,
     } = req.body;
 
     const task = await Task.findById(req.params.id);
@@ -117,6 +140,30 @@ exports.updateTask = async (req, res) => {
     if (brandId !== undefined) task.brandId = brandId || null;
     if (frequency !== undefined) task.frequency = frequency;
     if (dueDate !== undefined) task.dueDate = dueDate;
+
+    // ── Photography / department-specific fields ──
+    if (taskType !== undefined) task.taskType = taskType;
+    if (location !== undefined) task.location = location;
+    if (time !== undefined) task.time = time;
+    if (mediaType !== undefined) task.mediaType = mediaType || null;
+    if (totalCount !== undefined) {
+      task.totalCount = totalCount === "" ? null : Number(totalCount);
+    }
+    // completedCount comes from the photographer's edit-progress stepper
+    // (Photo.ts -> updateEditProgress). Auto-derive status from it so the
+    // simple 3-state photography board (pending/in_progress/completed)
+    // stays in sync without the photographer touching status directly.
+    if (completedCount !== undefined) {
+      const nextCompleted = Number(completedCount);
+      task.completedCount = nextCompleted;
+
+      const total = task.totalCount ?? 1;
+      if (status === undefined) {
+        if (nextCompleted <= 0) task.status = "pending";
+        else if (nextCompleted >= total) task.status = "completed";
+        else task.status = "in_progress";
+      }
+    }
 
     if (status !== undefined) {
       task.status = status;
@@ -374,11 +421,6 @@ exports.addChange = async (req, res) => {
 
 // ─── SPLIT (admin breaks a SA-assigned task into employee sub-tasks) ─────────
 // Body: { subtasks: [{ title, description, assignedTo, dueDate, frequency, brandId? }] }
-// Each entry becomes its own standalone Task document, assignedBy "admin",
-// linked back to the parent via parentTaskId. The parent itself is marked
-// hasSubtasks: true and nudged out of "pending" into "approved" (admin has
-// acted on it). The parent later auto-completes via checkAndAutoCompleteParent
-// once every child reaches "completed".
 exports.splitTask = async (req, res) => {
   try {
     const { subtasks } = req.body;
@@ -411,6 +453,12 @@ exports.splitTask = async (req, res) => {
         deliveryStatus: "not_delivered",
         parentTaskId: parent._id,
         changes: [],
+        // carry photography fields over if the parent had them
+        taskType: s.taskType || parent.taskType || "",
+        location: s.location ?? parent.location ?? "",
+        time: s.time ?? parent.time ?? "",
+        mediaType: s.mediaType ?? parent.mediaType ?? null,
+        totalCount: s.totalCount !== undefined ? Number(s.totalCount) : parent.totalCount ?? null,
       }))
     );
 
