@@ -22,6 +22,13 @@ const additionalWorkSchema = new mongoose.Schema(
       ref: "Employee",
       required: true,
     },
+
+    // ── Added for Meta Dashboard's richer logging form ──────────────────
+    // Optional — entries from other dashboards (photographer, SMM, etc.)
+    // simply won't set these, and that's fine.
+    category:   { type: String, default: "other" },
+    hoursSpent: { type: Number, default: null },
+    outcome:    { type: String, default: "", trim: true },
   },
   { timestamps: true }
 );

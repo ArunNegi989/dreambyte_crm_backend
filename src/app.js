@@ -27,12 +27,11 @@ app.use(
   '/api/additional-work',
   require('./routes/superadmindashboard/additionalWorkRoutes')
 );
+app.use('/api/meta', require('./routes/superadmindashboard/metaTaskRoutes'));// ── Global error handler ──────────────────────────────────────────────────────
 // ── 404 ───────────────────────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ message: `Route ${req.originalUrl} not found` });
 });
-
-// ── Global error handler ──────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ message: 'Something went wrong', error: err.message });

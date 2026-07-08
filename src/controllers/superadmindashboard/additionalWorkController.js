@@ -6,7 +6,7 @@ const AdditionalWork = require("../../models/superadmindashboard/AdditionalWork"
 // (loggedBy: "admin", assignedTo passed explicitly).
 exports.createAdditionalWork = async (req, res) => {
   try {
-    const { title, description, date, assignedTo, loggedBy } = req.body;
+    const { title, description, date, assignedTo, loggedBy, category, hoursSpent, outcome } = req.body;
 
     if (!title || !assignedTo) {
       return res.status(400).json({ success: false, message: "title and assignedTo are required" });
@@ -19,6 +19,10 @@ exports.createAdditionalWork = async (req, res) => {
       assignedTo,
       loggedBy: loggedBy || "self",
       status: "pending",
+      // ── optional, only used by dashboards that send them (e.g. Meta) ──
+      category: category || "other",
+      hoursSpent: hoursSpent !== undefined && hoursSpent !== "" ? Number(hoursSpent) : null,
+      outcome: outcome || "",
     });
 
     res.status(201).json({ success: true, message: "Additional work logged", data: entry });
@@ -48,13 +52,16 @@ exports.getAdditionalWork = async (req, res) => {
 // ─── UPDATE STATUS ────────────────────────────────────────────────────────────
 exports.updateAdditionalWork = async (req, res) => {
   try {
-    const { status, title, description } = req.body;
+    const { status, title, description, category, hoursSpent, outcome } = req.body;
     const item = await AdditionalWork.findById(req.params.id);
     if (!item) return res.status(404).json({ success: false, message: "Entry not found" });
 
     if (status !== undefined) item.status = status;
     if (title !== undefined) item.title = title;
     if (description !== undefined) item.description = description;
+    if (category !== undefined) item.category = category;
+    if (hoursSpent !== undefined) item.hoursSpent = hoursSpent === "" ? null : Number(hoursSpent);
+    if (outcome !== undefined) item.outcome = outcome;
 
     await item.save();
     res.json({ success: true, message: "Updated", data: item });

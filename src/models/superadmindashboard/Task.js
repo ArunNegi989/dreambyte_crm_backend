@@ -83,6 +83,14 @@ const taskSchema = new mongoose.Schema(
     // the controller auto-derives status from these two values.
     totalCount:     { type: Number, default: null },
     completedCount: { type: Number, default: 0 },
+
+    priority: {
+      type: String,
+      enum: ["low", "medium", "high", "urgent"],
+      default: "medium",
+    },
+
+
   },
   { timestamps: true }
 );
