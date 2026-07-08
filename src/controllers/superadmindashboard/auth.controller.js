@@ -2,8 +2,6 @@ const Employee = require('../../models/superadmindashboard/Employeemodel');
 const jwt = require('jsonwebtoken');
 
 // ── Public: check if any superadmin exists ────────────────────────────────────
-// Used by the login page to decide whether to show the "Register as superadmin"
-// button. No auth required — it only returns a boolean, no sensitive data.
 exports.checkSuperAdminExists = async (req, res) => {
   try {
     const exists = await Employee.exists({ role: 'super_admin' });
@@ -16,7 +14,6 @@ exports.checkSuperAdminExists = async (req, res) => {
 // ── Register ──────────────────────────────────────────────────────────────────
 exports.register = async (req, res) => {
   try {
-    // Block registration if a superadmin already exists
     const exists = await Employee.exists({ role: 'super_admin' });
     if (exists) {
       return res.status(403).json({ message: 'A superadmin already exists. Registration is disabled.' });
@@ -92,7 +89,13 @@ exports.login = async (req, res) => {
       return res.status(403).json({ message: 'Account is deactivated. Contact support.' });
 
     const token = jwt.sign(
-      { id: user._id, role: user.role, employeeId: user.employeeId, name: user.name },
+      {
+        id: user._id,
+        role: user.role,
+        department: user.department, // added for consistency with employee login
+        employeeId: user.employeeId,
+        name: user.name,
+      },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );

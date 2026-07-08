@@ -2,26 +2,23 @@ const jwt = require('jsonwebtoken');
 
 // Role hierarchy — higher roles can access lower role routes
 const ROLE_HIERARCHY = {
-  superadmin: 3,
+  super_admin: 3,
   admin: 2,
   employee: 1,
 };
 
 // Usage:
 //   auth()               → just checks if logged in, any role
-//   auth('employee')     → employee, admin, superadmin can access
-//   auth('admin')        → admin and superadmin only
-//   auth('superadmin')   → superadmin only
+//   auth('employee')     → employee, admin, super_admin can access
+//   auth('admin')        → admin and super_admin only
+//   auth('super_admin')  → super_admin only
 module.exports = (requiredRole) => (req, res, next) => {
   let token = null;
 
-  // 1. Check Authorization header first
   const header = req.headers.authorization;
   if (header && header.startsWith('Bearer ')) {
     token = header.split(' ')[1];
-  }
-  // 2. Fall back to cookie
-  else if (req.cookies && req.cookies.token) {
+  } else if (req.cookies && req.cookies.token) {
     token = req.cookies.token;
   }
 
@@ -32,7 +29,6 @@ module.exports = (requiredRole) => (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded;
 
-    // Check role if required
     if (requiredRole) {
       const userLevel = ROLE_HIERARCHY[decoded.role] ?? 0;
       const requiredLevel = ROLE_HIERARCHY[requiredRole] ?? 0;

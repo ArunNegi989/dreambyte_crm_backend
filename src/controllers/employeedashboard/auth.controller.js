@@ -1,22 +1,46 @@
 const Employee = require('../../models/superadmindashboard/Employeemodel');
 const jwt = require('jsonwebtoken');
 
-// Map roles to frontend dashboard routes
+// Role-level dashboards (fallback / non-employee roles)
 const ROLE_REDIRECTS = {
-  employee:   '/dashboard/employeedashboard',
-  admin:      '/dashboard/admindashboard',
-  superadmin: '/dashboard/superadmindashboard',
+  employee:    '/dashboard/employeedashboard',
+  admin:       '/dashboard/admindashboard',
+  super_admin: '/dashboard/superadmindashboard',
 };
+
+// Department-specific dashboards — only applied for role === 'employee'.
+// Keys must match Employee.department values exactly (case-sensitive).
+const DEPARTMENT_REDIRECTS = {
+  'meta ads':  '/dashboard/metadashboard',
+  'developer': '/dashboard/developerdashboard',
+  'sales':     '/dashboard/salesdashboard',
+  'smm':         '/dashboard/smmdashboard',
+  'designer':    '/dashboard/designerdashboard',
+  'photography': '/dashboard/photographydashboard',
+  'seo':         '/dashboard/seodashboard',
+  // ...add more departments here, always in lowercase
+};
+
+function normalizeDept(dept) {
+  return (dept || '').trim().toLowerCase();
+}
+
+function getRedirectPath(user) {
+  if (user.role === 'employee') {
+    const key = normalizeDept(user.department);
+    if (DEPARTMENT_REDIRECTS[key]) return DEPARTMENT_REDIRECTS[key];
+  }
+  return ROLE_REDIRECTS[user.role] || '/dashboard/employeedashboard';
+}
 
 exports.login = async (req, res) => {
   try {
     const { employeeId, password } = req.body;
-console.log(employeeId, password)
+
     if (!employeeId || !password)
       return res.status(400).json({ message: 'Employee ID and password are required' });
 
     const user = await Employee.findOne({ employeeId });
-    console.log(user)
     if (!user)
       return res.status(401).json({ message: 'Invalid employee ID or password' });
 
@@ -31,6 +55,7 @@ console.log(employeeId, password)
       {
         id: user._id,
         role: user.role,
+        department: user.department,
         employeeId: user.employeeId,
         name: user.name,
       },
@@ -38,7 +63,6 @@ console.log(employeeId, password)
       { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
 
-    // Secure httpOnly cookie
     res.cookie('token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
@@ -50,7 +74,7 @@ console.log(employeeId, password)
     res.json({
       success: true,
       token,
-      redirectTo: ROLE_REDIRECTS[user.role] || '/dashboard/employeedashboard',
+      redirectTo: getRedirectPath(user),
       user: {
         id: user._id,
         name: user.name,
