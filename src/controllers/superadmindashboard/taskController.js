@@ -33,7 +33,7 @@ exports.createTask = async (req, res) => {
       brandId,
       frequency,
       dueDate,
-      // ── Photography / department-specific fields (were missing before) ──
+      // ── Photography / department-specific fields ──
       taskType,
       location,
       time,
@@ -76,6 +76,9 @@ exports.getTasks = async (req, res) => {
   try {
     const filter = {};
 
+    // An employee (including designers) only ever sees their own tasks —
+    // this is what makes the Designer Dashboard "dynamic": whatever the
+    // super admin/admin assigns to that employee's Mongo _id shows up here.
     if (req.user?.role === "employee") {
       filter.assignedTo = req.user.id;
     } else if (req.query.assignedTo) {
@@ -120,7 +123,7 @@ exports.updateTask = async (req, res) => {
       status,
       rejectRemark,
       changedBy,
-      // ── Photography / department-specific fields (were missing before) ──
+      // ── Photography / department-specific fields ──
       taskType,
       location,
       time,
@@ -149,13 +152,16 @@ exports.updateTask = async (req, res) => {
     if (totalCount !== undefined) {
       task.totalCount = totalCount === "" ? null : Number(totalCount);
     }
-    // completedCount comes from the photographer's edit-progress stepper
-    // (Photo.ts -> updateEditProgress). Auto-derive status from it so the
-    // simple 3-state photography board (pending/in_progress/completed)
-    // stays in sync without the photographer touching status directly.
+    // completedCount comes from the photographer's edit-progress stepper.
+    // Auto-derive status from it so the simple 3-state board stays in sync.
     if (completedCount !== undefined) {
       const nextCompleted = Number(completedCount);
       task.completedCount = nextCompleted;
+
+      // ── TIME TRACKING: first bit of real progress stamps startedAt ──
+      if (nextCompleted > 0 && !task.startedAt) {
+        task.startedAt = new Date().toISOString();
+      }
 
       const total = task.totalCount ?? 1;
       if (status === undefined) {
@@ -167,6 +173,14 @@ exports.updateTask = async (req, res) => {
 
     if (status !== undefined) {
       task.status = status;
+
+      // ── TIME TRACKING: stamp startedAt the very first time a task moves
+      // into "in_progress" (this is how the Designer Dashboard's
+      // "Start Task" button kicks off the "time taken" clock). Only set
+      // once — never overwritten on later status changes.
+      if (status === "in_progress" && !task.startedAt) {
+        task.startedAt = new Date().toISOString();
+      }
 
       // ── REJECTED / CHANGES_REQUESTED: both push into changes[] as a
       // single source of truth. This entry stays resolved: false on
@@ -251,12 +265,11 @@ exports.submitTask = async (req, res) => {
     task.status         = "completed";
 
     // Save the employee's reported start time ONLY the first time — this
-    // anchors the "time taken" calculation. If for some reason submitTask
-    // gets called again with an existing startedAt already on record, we
-    // keep the original so total time-taken keeps accumulating correctly
-    // instead of resetting.
-    if (startedAt && !task.startedAt) {
-      task.startedAt = startedAt;
+    // anchors the "time taken" calculation. If startedAt was never stamped
+    // (e.g. employee skipped straight to submit), fall back to whatever the
+    // frontend sends, otherwise fall back to now so time-taken never breaks.
+    if (!task.startedAt) {
+      task.startedAt = startedAt || new Date().toISOString();
     }
 
     // IMPORTANT: resolved: true here. This is just a history log of the
@@ -375,6 +388,10 @@ exports.deliverTask = async (req, res) => {
     task.deliveryStatus = "delivered";
     task.deliveredAt    = new Date().toISOString();
     task.deliveryNote   = deliveryNote || "";
+
+    if (!task.startedAt) {
+      task.startedAt = new Date().toISOString();
+    }
 
     // Same reasoning as submitTask: this is a log entry, not an open note.
     task.changes.push({

@@ -1,12 +1,14 @@
 const AdditionalWork = require("../../models/superadmindashboard/AdditionalWork");
 
 // ─── CREATE ───────────────────────────────────────────────────────────────────
-// Either the employee logs their own extra work (loggedBy: "self", no body
-// override needed) or an admin/SA logs it on the employee's behalf
-// (loggedBy: "admin", assignedTo passed explicitly).
+// Either the employee logs their own extra work (loggedBy: "self" — assignedTo
+// defaults to req.user.id so the frontend never needs to know its own Mongo id)
+// or an admin/SA logs it on the employee's behalf (loggedBy: "admin",
+// assignedTo passed explicitly in the body).
 exports.createAdditionalWork = async (req, res) => {
   try {
-    const { title, description, date, assignedTo, loggedBy, category, hoursSpent, outcome } = req.body;
+    const { title, description, date, loggedBy, category, hoursSpent, outcome } = req.body;
+    const assignedTo = req.body.assignedTo || req.user?.id;
 
     if (!title || !assignedTo) {
       return res.status(400).json({ success: false, message: "title and assignedTo are required" });
