@@ -15,7 +15,7 @@ const DEPARTMENT_REDIRECTS = {
   'developer': '/dashboard/developerdashboard',
   'sales':     '/dashboard/salesdashboard',
   'smm':         '/dashboard/smmdashboard',
-  'designer':    '/dashboard/designerdashboard',
+  'graphic':    '/dashboard/designerdashboard',
   'photography': '/dashboard/photographydashboard',
   'seo':         '/dashboard/seodashboard',
   // ...add more departments here, always in lowercase

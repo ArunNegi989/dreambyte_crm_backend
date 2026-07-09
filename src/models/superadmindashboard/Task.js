@@ -89,7 +89,24 @@ const taskSchema = new mongoose.Schema(
       enum: ["low", "medium", "high", "urgent"],
       default: "medium",
     },
-
+    
+    status: {
+      type: String,
+      enum: ["pending", "approved", "in_progress", "blocked", "rejected", "completed", "changes_requested"], // ← added "blocked" for SEO
+      default: "pending",
+    },
+    
+    // ...deliveryStatus, deliveryNote, startedAt, deliveredAt, rejectRemark, changes... (unchanged)
+    
+    // ── SEO-specific fields ───────────────────────────────────────────
+    clientName:   { type: String, default: "" },
+    remarks:      { type: String, default: "" },   // employee's own submission remarks (distinct from rejectRemark)
+    submittedAt:  { type: String, default: null },
+    completedAt:  { type: String, default: null },
+    seoDetails:   { type: mongoose.Schema.Types.Mixed, default: {} }, // holds TaskDetails per category (backlink rows, keyword rows, gmb report numbers, etc.)
+    
+    // ...priority, taskType, location, time, mediaType, totalCount, completedCount stay as-is —
+    // `taskType` is reused to store the SEO category value (e.g. "gmb_handling")
 
   },
   { timestamps: true }

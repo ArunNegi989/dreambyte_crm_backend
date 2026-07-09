@@ -28,6 +28,9 @@ app.use(
   require('./routes/superadmindashboard/additionalWorkRoutes')
 );
 app.use('/api/meta', require('./routes/superadmindashboard/metaTaskRoutes'));// ── Global error handler ──────────────────────────────────────────────────────
+
+app.use('/api/seo',  require('./routes/superadmindashboard/seoTaskRoutes')); // ← add this
+
 // ── 404 ───────────────────────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ message: `Route ${req.originalUrl} not found` });
