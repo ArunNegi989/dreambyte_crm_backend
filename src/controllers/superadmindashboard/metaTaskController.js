@@ -24,6 +24,8 @@ function toFrontendTask(task) {
     details: buildDetails(task),
     deliveryStatus: task.deliveryStatus,
     rejectRemark: task.rejectRemark || "",
+    startedAt: task.startedAt || "",
+    deliveredAt: task.deliveredAt || "",
     changes: (task.changes || []).map((c) => ({
       _id: c._id.toString(),
       changedBy: c.changedBy,
