@@ -11,6 +11,13 @@ function resolveCategory(taskType = "") {
   return CATEGORY_VALUES.byLabel[taskType] || taskType;
 }
 
+// NOTE: this file previously defined toFrontendTask() twice — the second
+// definition silently shadowed the first at runtime (function hoisting),
+// so the first one's shape never actually mattered. Merged into one here,
+// keeping the rejectRemark/changes fields from the second version, and
+// adding startedAt/deliveredAt which were missing from BOTH — that's why
+// "time taken" never showed up on the frontend no matter what the backend
+// computed.
 function toFrontendTask(task) {
   const brand = task.brandId;
   return {
@@ -28,6 +35,18 @@ function toFrontendTask(task) {
     submittedAt: task.submittedAt || null,
     completedAt: task.completedAt || null,
     details: task.seoDetails || {},
+    rejectRemark: task.rejectRemark || "",
+    changes: (task.changes || []).map((c) => ({
+      id: c._id.toString(),
+      changedBy: c.changedBy,
+      note: c.note,
+      changedAt: c.changedAt,
+      resolved: c.resolved,
+      employeeResponse: c.employeeResponse || "",
+    })),
+    // ── Time tracking — was missing entirely before ──────────────────
+    startedAt: task.startedAt || null,
+    deliveredAt: task.deliveredAt || null,
   };
 }
 
@@ -100,100 +119,82 @@ exports.getDashboardStats = async (req, res) => {
 };
 
 exports.updateTaskWork = async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { status, remarks, details } = req.body;
-  
-      const task = await Task.findById(id);
-      if (!task) return res.status(404).json({ success: false, message: "Task not found" });
-  
-      const now = new Date().toISOString();
-  
-      if (status) task.status = status;
-      if (details !== undefined) task.seoDetails = { ...(task.seoDetails || {}), ...details };
-  
-      task.remarks = remarks || "";
-      if (!task.submittedAt) task.submittedAt = now;
-      if (status === "completed") task.completedAt = now;
-  
-      // ── Make the employee's comment visible to superadmin ───────────────
-      // Superadmin only ever reads `changes[]`, so every submission needs an
-      // entry here — even if remarks is empty, so there's a record of the
-      // status change itself.
-      task.changes.push({
-        changedBy: "Employee",
-        note: remarks?.trim()
-          ? remarks
-          : `Marked as "${status}" with no additional remarks.`,
-        changedAt: now,
-        resolved: false,
-        employeeResponse: "",
-      });
-  
-      // ── Every employee submission through this flow counts as delivery ──
-      // The SEO dashboard has no separate "Mark Delivered" step like Meta
-      // does, so submitting work here IS the delivery event.
+  try {
+    const { id } = req.params;
+    const { status, remarks, details } = req.body;
+
+    const task = await Task.findById(id);
+    if (!task) return res.status(404).json({ success: false, message: "Task not found" });
+
+    const now = new Date().toISOString();
+
+    if (status) task.status = status;
+    if (details !== undefined) task.seoDetails = { ...(task.seoDetails || {}), ...details };
+
+    // ── Time tracking ────────────────────────────────────────────────
+    // Stamp startedAt the very first time this task moves into
+    // "in_progress" — this is what the "Start Task" button triggers.
+    // Never overwritten on later saves, so it anchors the timer.
+    if (status === "in_progress" && !task.startedAt) {
+      task.startedAt = now;
+    }
+
+    task.remarks = remarks || "";
+    if (!task.submittedAt) task.submittedAt = now;
+
+    // ── Delivery / completion ────────────────────────────────────────
+    // Previously this block ran unconditionally on EVERY save (including
+    // "Start Task" clicks), stamping deliveryStatus="delivered" and
+    // deliveredAt immediately — which zeroed out the timer the instant a
+    // task was started. Now it only fires when the task is actually
+    // completed, so deliveredAt genuinely marks the end of work.
+    if (status === "completed") {
+      task.completedAt = now;
       task.deliveryStatus = "delivered";
       task.deliveryNote = remarks || task.deliveryNote;
-      task.deliveredAt = now;
-  
-      await task.save();
-      await task.populate("brandId", "name");
-      res.json({ success: true, data: toFrontendTask(task) });
-    } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      task.deliveredAt = task.deliveredAt || now;
     }
-  };
 
+    // ── Make the employee's comment visible to superadmin ───────────────
+    // Superadmin only ever reads `changes[]`, so every submission needs an
+    // entry here — even if remarks is empty, so there's a record of the
+    // status change itself.
+    task.changes.push({
+      changedBy: "Employee",
+      note: remarks?.trim()
+        ? remarks
+        : `Marked as "${status}" with no additional remarks.`,
+      changedAt: now,
+      resolved: false,
+      employeeResponse: "",
+    });
 
-  exports.respondToChange = async (req, res) => {
-    try {
-      const { id } = req.params;       // task id
-      const { changeId, response } = req.body;
-  
-      const task = await Task.findById(id);
-      if (!task) return res.status(404).json({ success: false, message: "Task not found" });
-  
-      const change = task.changes.id(changeId);
-      if (!change) return res.status(404).json({ success: false, message: "Change not found" });
-  
-      change.employeeResponse = response;
-      change.resolved = true;
-  
-      await task.save();
-      await task.populate("brandId", "name");
-      res.json({ success: true, data: toFrontendTask(task) });
-    } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
-    }
-  };
+    await task.save();
+    await task.populate("brandId", "name");
+    res.json({ success: true, data: toFrontendTask(task) });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
 
+exports.respondToChange = async (req, res) => {
+  try {
+    const { id } = req.params; // task id
+    const { changeId, response } = req.body;
 
-  function toFrontendTask(task) {
-  const brand = task.brandId;
-  return {
-    id: task._id.toString(),
-    title: task.title,
-    category: resolveCategory(task.taskType || ""),
-    description: task.description || "",
-    clientName: task.clientName || "",
-    brandName: brand && typeof brand === "object" ? brand.name : "",
-    assignedDate: task.createdAt ? task.createdAt.toISOString().slice(0, 10) : "",
-    dueDate: task.dueDate || "",
-    status: task.status,
-    priority: task.priority || "medium",
-    remarks: task.remarks || "",
-    submittedAt: task.submittedAt || null,
-    completedAt: task.completedAt || null,
-    details: task.seoDetails || {},
-    rejectRemark: task.rejectRemark || "",              // ← add
-    changes: (task.changes || []).map((c) => ({          // ← add
-      id: c._id.toString(),
-      changedBy: c.changedBy,
-      note: c.note,
-      changedAt: c.changedAt,
-      resolved: c.resolved,
-      employeeResponse: c.employeeResponse || "",
-    })),
-  };
-}
+    const task = await Task.findById(id);
+    if (!task) return res.status(404).json({ success: false, message: "Task not found" });
+
+    const change = task.changes.id(changeId);
+    if (!change) return res.status(404).json({ success: false, message: "Change not found" });
+
+    change.employeeResponse = response;
+    change.resolved = true;
+
+    await task.save();
+    await task.populate("brandId", "name");
+    res.json({ success: true, data: toFrontendTask(task) });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

@@ -196,7 +196,10 @@ exports.updateTask = async (req, res) => {
       if (status === "in_progress" && !task.startedAt) {
         task.startedAt = new Date().toISOString();
       }
-
+      if (status === "completed" && !task.deliveredAt) {
+        task.deliveredAt = new Date().toISOString();
+        task.completedAt = task.deliveredAt; // keep the SEO-specific field in sync
+      }
       // ── REJECTED / CHANGES_REQUESTED: both push into changes[] as a
       // single source of truth. This entry stays resolved: false on
       // purpose — it's an open note the employee MUST reply to before
