@@ -7,6 +7,9 @@ const {
   submitTask,
   respondToChanges,
   getDashboardStats,
+  addSubtask,
+  toggleSubtask,
+  removeSubtask,
 } = require('../../controllers/superadmindashboard/taskController');
 
 router.use('/auth', require('./auth.routes'));
@@ -17,5 +20,10 @@ router.get('/tasks',                   auth('employee'), getTasks);
 router.get('/tasks/:id',               auth('employee'), getTask);
 router.post('/tasks/:id/submit',       auth('employee'), submitTask);
 router.post('/tasks/:id/respond',      auth('employee'), respondToChanges);
+
+// ── Subtasks (employee's own checklist) ────────────────────────────────
+router.post('/tasks/:id/subtasks',                  auth('employee'), addSubtask);
+router.patch('/tasks/:id/subtasks/:subtaskId',      auth('employee'), toggleSubtask);
+router.delete('/tasks/:id/subtasks/:subtaskId',     auth('employee'), removeSubtask);
 
 module.exports = router;
