@@ -15,6 +15,18 @@ const {
   deleteTask,
 } = require("../../controllers/superadmindashboard/taskController");
 
+// THE FIX: this router had NO auth middleware at all, so req.user was
+// always undefined here no matter how you logged in — which is why the
+// role-based filter in taskController.getTasks was silently never applying
+// (and now correctly throws "Not authenticated" instead of leaking data).
+//
+// auth('employee') = lowest tier in the role hierarchy → any logged-in
+// user (employee, admin, or super_admin) can hit these routes; the
+// controller itself then decides what each of them is allowed to see.
+const auth = require("../../middleware/auth");
+
+router.use(auth('employee'));
+
 router.post("/", createTask);                    // assign task (admin/super_admin)
 router.get("/", getTasks);                        // get all tasks (optionally ?assignedTo=id&assignedBy=&topLevel=true&parentTaskId=)
 router.get("/dashboard-stats", getDashboardStats); // employee's own dashboard stats

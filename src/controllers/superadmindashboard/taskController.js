@@ -1,5 +1,12 @@
 const Task = require("../../models/superadmindashboard/Task");
 
+// ── Who counts as "privileged" (can see everyone's tasks)? ──────────────────
+// Only admin / super_admin. Everyone else — regardless of the literal role
+// string stored for them (employee / designer / photographer / smm / etc.)
+// — only ever sees tasks assigned to their own id. This mirrors the same
+// fix applied in additionalWorkController.js.
+const isPrivileged = (req) => req.user?.role === "admin" || req.user?.role === "super_admin";
+
 // ─── Populate helper ─────────────────────────────────────────────────────────
 const populateTask = (query) =>
   query
@@ -72,17 +79,25 @@ exports.createTask = async (req, res) => {
 };
 
 // ─── GET ALL ──────────────────────────────────────────────────────────────────
+// THE FIX: privileged (admin/super_admin) callers can see everyone's tasks,
+// or a specific employee's via ?assignedTo=. Every other caller — no matter
+// what their literal role string is — only ever gets their own tasks. This
+// is what makes every department dashboard (Designer, SMM, Photographer…)
+// "dynamic": whatever gets assigned to that employee's Mongo _id is what
+// shows up for them, and only for them.
 exports.getTasks = async (req, res) => {
   try {
     const filter = {};
 
-    // An employee (including designers) only ever sees their own tasks —
-    // this is what makes the Designer Dashboard "dynamic": whatever the
-    // super admin/admin assigns to that employee's Mongo _id shows up here.
-    if (req.user?.role === "employee") {
-      filter.assignedTo = req.user.id;
-    } else if (req.query.assignedTo) {
-      filter.assignedTo = req.query.assignedTo;
+    if (isPrivileged(req)) {
+      if (req.query.assignedTo) filter.assignedTo = req.query.assignedTo;
+      // else: no filter — admins/SAs intentionally see every task
+    } else {
+      const selfId = req.user?.id || req.user?._id;
+      if (!selfId) {
+        return res.status(401).json({ success: false, message: "Not authenticated" });
+      }
+      filter.assignedTo = selfId;
     }
 
     if (req.query.status)       filter.status = req.query.status;
@@ -175,9 +190,9 @@ exports.updateTask = async (req, res) => {
       task.status = status;
 
       // ── TIME TRACKING: stamp startedAt the very first time a task moves
-      // into "in_progress" (this is how the Designer Dashboard's
-      // "Start Task" button kicks off the "time taken" clock). Only set
-      // once — never overwritten on later status changes.
+      // into "in_progress" (this is how each dashboard's "Start Task"
+      // button kicks off the "time taken" clock). Only set once — never
+      // overwritten on later status changes.
       if (status === "in_progress" && !task.startedAt) {
         task.startedAt = new Date().toISOString();
       }
@@ -338,7 +353,7 @@ exports.respondToChanges = async (req, res) => {
 // ─── DASHBOARD STATS (employee) ───────────────────────────────────────────────
 exports.getDashboardStats = async (req, res) => {
   try {
-    const employeeId = req.user.id;
+    const employeeId = req.user?.id || req.user?._id;
     const allTasks   = await Task.find({ assignedTo: employeeId });
 
     const today     = new Date().toISOString().split("T")[0];

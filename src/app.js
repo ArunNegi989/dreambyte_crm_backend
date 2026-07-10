@@ -6,6 +6,14 @@ require('dotenv').config();
 const app = express();
 
 app.use(cors({ origin: true, credentials: true }));
+
+// THE FIX: cookieParser was imported but never actually mounted with
+// app.use(). Without this, req.cookies is always undefined, so the auth
+// middleware's `req.cookies.token` check silently never finds the token
+// even though the browser is sending the cookie correctly — that's why
+// every request was falling through to "No token provided."
+app.use(cookieParser());
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
