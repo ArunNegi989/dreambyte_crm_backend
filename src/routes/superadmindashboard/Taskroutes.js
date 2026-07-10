@@ -13,6 +13,9 @@ const {
   addChange,
   splitTask,
   deleteTask,
+  addSubtask,
+  toggleSubtask,
+  removeSubtask,
 } = require("../../controllers/superadmindashboard/taskController");
 
 router.post("/", createTask);                    // assign task (admin/super_admin)
@@ -26,5 +29,9 @@ router.post("/:id/deliver", deliverTask);           // employee marks delivered 
 router.post("/:id/changes", addChange);             // add manual change log note
 router.post("/:id/split", splitTask);               // admin splits a SA-assigned task into employee sub-tasks
 router.delete("/:id", deleteTask);                  // delete task
+
+router.post("/:id/subtasks", addSubtask);
+router.patch("/:id/subtasks/:subtaskId", toggleSubtask);
+router.delete("/:id/subtasks/:subtaskId", removeSubtask);
 
 module.exports = router;

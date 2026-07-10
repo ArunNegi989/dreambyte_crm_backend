@@ -500,3 +500,70 @@ exports.deleteTask = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+exports.addSubtask = async (req, res) => {
+  try {
+    const { title } = req.body;
+    if (!title || !title.trim())
+      return res.status(400).json({ success: false, message: "title is required" });
+
+    const task = await Task.findById(req.params.id);
+    if (!task) return res.status(404).json({ success: false, message: "Task not found" });
+
+    // Employees may only touch subtasks on their own tasks
+    if (req.user?.role === "employee" && String(task.assignedTo) !== String(req.user.id)) {
+      return res.status(403).json({ success: false, message: "Not authorized" });
+    }
+
+    task.subtasks.push({ title: title.trim(), status: "pending" });
+    await task.save();
+
+    const populated = await populateTask(Task.findById(task._id));
+    res.status(201).json({ success: true, message: "Subtask added", data: populated });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// PATCH /tasks/:id/subtasks/:subtaskId — toggles pending <-> completed
+exports.toggleSubtask = async (req, res) => {
+  try {
+    const task = await Task.findById(req.params.id);
+    if (!task) return res.status(404).json({ success: false, message: "Task not found" });
+
+    if (req.user?.role === "employee" && String(task.assignedTo) !== String(req.user.id)) {
+      return res.status(403).json({ success: false, message: "Not authorized" });
+    }
+
+    const sub = task.subtasks.id(req.params.subtaskId);
+    if (!sub) return res.status(404).json({ success: false, message: "Subtask not found" });
+
+    sub.status = sub.status === "completed" ? "pending" : "completed";
+    await task.save();
+
+    const populated = await populateTask(Task.findById(task._id));
+    res.json({ success: true, message: "Subtask updated", data: populated });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// DELETE /tasks/:id/subtasks/:subtaskId
+exports.removeSubtask = async (req, res) => {
+  try {
+    const task = await Task.findById(req.params.id);
+    if (!task) return res.status(404).json({ success: false, message: "Task not found" });
+
+    if (req.user?.role === "employee" && String(task.assignedTo) !== String(req.user.id)) {
+      return res.status(403).json({ success: false, message: "Not authorized" });
+    }
+
+    task.subtasks.pull(req.params.subtaskId);
+    await task.save();
+
+    const populated = await populateTask(Task.findById(task._id));
+    res.json({ success: true, message: "Subtask removed", data: populated });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

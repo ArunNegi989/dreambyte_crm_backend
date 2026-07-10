@@ -105,9 +105,17 @@ const taskSchema = new mongoose.Schema(
     completedAt:  { type: String, default: null },
     seoDetails:   { type: mongoose.Schema.Types.Mixed, default: {} }, // holds TaskDetails per category (backlink rows, keyword rows, gmb report numbers, etc.)
     
-    // ...priority, taskType, location, time, mediaType, totalCount, completedCount stay as-is —
-    // `taskType` is reused to store the SEO category value (e.g. "gmb_handling")
-
+    subtasks: {
+      type: [
+        {
+          title:     { type: String, required: true, trim: true },
+          status:    { type: String, enum: ["pending", "completed"], default: "pending" },
+          createdAt: { type: String, default: () => new Date().toISOString() },
+        },
+      ],
+      default: [],
+    },
+    
   },
   { timestamps: true }
 );
