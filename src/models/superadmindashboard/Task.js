@@ -62,6 +62,19 @@ const taskSchema = new mongoose.Schema(
     parentTaskId: { type: mongoose.Schema.Types.ObjectId, ref: "Task", default: null },
     hasSubtasks:  { type: Boolean, default: false },
 
+    // ── Department this task belongs to ───────────────────────────────
+    // Normally implied by the assignee's own department (a plain
+    // employee only ever works within their own department). But when a
+    // Super Admin assigns a task straight to an Admin, the Admin isn't
+    // tied to a single department — they receive work for whichever
+    // department the Super Admin is delegating. This field stores that
+    // department explicitly so the Admin's dashboard knows which
+    // department's employees are allowed to receive it once split.
+    // Sub-tasks created via splitTask() always inherit their parent's
+    // department — an Admin cannot reassign a Graphic task to a
+    // Development employee.
+    department: { type: String, default: "" },
+
     // ── Department "Work Type" tag ────────────────────────────────────
     // Free-text label matching one of data/departmentTasks.ts's entries
     // (e.g. "Shoots", "Photo Edit", "Video Edit", "Post Design", "UGC"...).

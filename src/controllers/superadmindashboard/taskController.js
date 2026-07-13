@@ -40,6 +40,8 @@ exports.createTask = async (req, res) => {
       brandId,
       frequency,
       dueDate,
+      // ── Department this task belongs to (explicit for SA→Admin tasks) ──
+      department,
       // ── Photography / department-specific fields ──
       taskType,
       location,
@@ -62,6 +64,7 @@ exports.createTask = async (req, res) => {
       status: "pending",
       deliveryStatus: "not_delivered",
       changes: [],
+      department: department || "",
       // ── Photography / department-specific fields ──
       taskType: taskType || "",
       location: location || "",
@@ -104,6 +107,7 @@ exports.getTasks = async (req, res) => {
     if (req.query.brand)        filter.brandId = req.query.brand;
     if (req.query.date)         filter.dueDate = req.query.date;
     if (req.query.assignedBy)   filter.assignedBy = req.query.assignedBy;
+    if (req.query.department)   filter.department = req.query.department;
     if (req.query.parentTaskId) filter.parentTaskId = req.query.parentTaskId;
     if (req.query.topLevel === "true") filter.parentTaskId = null; // only parent/standalone tasks
 
@@ -138,6 +142,8 @@ exports.updateTask = async (req, res) => {
       status,
       rejectRemark,
       changedBy,
+      // ── Department this task belongs to ──
+      department,
       // ── Photography / department-specific fields ──
       taskType,
       location,
@@ -158,6 +164,7 @@ exports.updateTask = async (req, res) => {
     if (brandId !== undefined) task.brandId = brandId || null;
     if (frequency !== undefined) task.frequency = frequency;
     if (dueDate !== undefined) task.dueDate = dueDate;
+    if (department !== undefined) task.department = department;
 
     // ── Photography / department-specific fields ──
     if (taskType !== undefined) task.taskType = taskType;
@@ -475,6 +482,11 @@ exports.splitTask = async (req, res) => {
     const parent = await Task.findById(req.params.id);
     if (!parent) return res.status(404).json({ success: false, message: "Parent task not found" });
 
+    // Sub-tasks ALWAYS inherit the parent's department — the frontend
+    // already restricts which employees can be picked to only that
+    // department, but we enforce it again here server-side so a sub-task
+    // can never end up in a different department than its parent, no
+    // matter what the request body claims.
     const created = await Task.insertMany(
       subtasks.map((s) => ({
         title: s.title,
@@ -488,6 +500,7 @@ exports.splitTask = async (req, res) => {
         deliveryStatus: "not_delivered",
         parentTaskId: parent._id,
         changes: [],
+        department: parent.department || "",
         // carry photography fields over if the parent had them
         taskType: s.taskType || parent.taskType || "",
         location: s.location ?? parent.location ?? "",
