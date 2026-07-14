@@ -16,6 +16,7 @@ const {
   addSubtask,
   toggleSubtask,
   removeSubtask,
+  startTask
 } = require("../../controllers/superadmindashboard/taskController");
 
 // THE FIX: this router had NO auth middleware at all, so req.user was
@@ -45,5 +46,8 @@ router.delete("/:id", deleteTask);                  // delete task
 router.post("/:id/subtasks", addSubtask);
 router.patch("/:id/subtasks/:subtaskId", toggleSubtask);
 router.delete("/:id/subtasks/:subtaskId", removeSubtask);
+
+router.post("/:id/start", startTask);   // add above /:id/submit
+
 
 module.exports = router;

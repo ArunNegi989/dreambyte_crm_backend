@@ -29,6 +29,19 @@ const checkAndAutoCompleteParent = async (parentTaskId) => {
   }
 };
 
+// ── Stop the running timer (if any) and fold elapsed time into the total ─────
+// Called from every "submit"-like action (submitTask, respondToChanges,
+// deliverTask). Safe to call even if the timer isn't running — it's a no-op
+// in that case, so resubmitting a task that was never explicitly "resumed"
+// just adds 0 extra time instead of throwing or double counting.
+const stopTimer = (task) => {
+  if (task.currentSessionStartedAt) {
+    const elapsed = Date.now() - new Date(task.currentSessionStartedAt).getTime();
+    if (elapsed > 0) task.timeSpentMs = (task.timeSpentMs || 0) + elapsed;
+    task.currentSessionStartedAt = null;
+  }
+};
+
 // ─── CREATE ───────────────────────────────────────────────────────────────────
 exports.createTask = async (req, res) => {
   try {
@@ -213,6 +226,12 @@ exports.updateTask = async (req, res) => {
       // they can resubmit. It only flips to resolved once the employee
       // answers it via respondToChanges().
       if (status === "rejected" || status === "changes_requested") {
+        // Defensive: a task should never be mid-timer when it gets
+        // rejected (submit/respond already stop the clock beforehand),
+        // but guard against it anyway so the clock never runs across a
+        // rejection boundary undetected.
+        stopTimer(task);
+
         const hasRemarkText = rejectRemark && rejectRemark.trim().length > 0;
         const actor = changedBy || "Super Admin";
 
@@ -274,6 +293,37 @@ exports.updateTask = async (req, res) => {
   }
 };
 
+// ─── START / RESUME (employee clicks "Start Task" or "Resume Task") ──────────
+// One endpoint handles both cases:
+//   • status === "pending"                       → fresh start, status flips to "in_progress"
+//   • status === "rejected" / "changes_requested" → resume, status is left AS-IS so the
+//     rejection banner + change log keep showing until the employee actually resubmits
+// Idempotent: calling it again while the timer's already running is a no-op.
+exports.startTask = async (req, res) => {
+  try {
+    const task = await Task.findById(req.params.id);
+    if (!task) return res.status(404).json({ success: false, message: "Task not found" });
+
+    const selfId = req.user?.id || req.user?._id;
+    if (!isPrivileged(req) && String(task.assignedTo) !== String(selfId)) {
+      return res.status(403).json({ success: false, message: "Not authorized" });
+    }
+
+    if (!task.currentSessionStartedAt) {
+      task.currentSessionStartedAt = new Date().toISOString();
+      if (!task.startedAt) task.startedAt = task.currentSessionStartedAt;
+
+      if (task.status === "pending") task.status = "in_progress";
+    }
+
+    await task.save();
+    const populated = await populateTask(Task.findById(task._id));
+    res.json({ success: true, message: "Task started", data: populated });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // ─── SUBMIT (employee submits their task — first time / fresh submission) ────
 exports.submitTask = async (req, res) => {
   try {
@@ -289,10 +339,12 @@ exports.submitTask = async (req, res) => {
     task.deliveredAt    = new Date().toISOString();
     task.status         = "completed";
 
-    // Save the employee's reported start time ONLY the first time — this
-    // anchors the "time taken" calculation. If startedAt was never stamped
-    // (e.g. employee skipped straight to submit), fall back to whatever the
-    // frontend sends, otherwise fall back to now so time-taken never breaks.
+    // Stop the clock — folds the current running session into timeSpentMs.
+    stopTimer(task);
+
+    // Legacy fallback so startedAt is never blank for old tasks that
+    // skipped the Start button entirely (e.g. frontend sent its own value,
+    // or nothing was ever stamped at all).
     if (!task.startedAt) {
       task.startedAt = startedAt || new Date().toISOString();
     }
@@ -328,6 +380,10 @@ exports.respondToChanges = async (req, res) => {
 
     const task = await Task.findById(req.params.id);
     if (!task) return res.status(404).json({ success: false, message: "Task not found" });
+
+    // Resubmitting after a rejection is also a "submit" — stop the clock
+    // (no-op if the employee never clicked Resume, so no time is added).
+    stopTimer(task);
 
     if (Array.isArray(responses)) {
       responses.forEach(({ id, response }) => {
@@ -413,6 +469,9 @@ exports.deliverTask = async (req, res) => {
     task.deliveryStatus = "delivered";
     task.deliveredAt    = new Date().toISOString();
     task.deliveryNote   = deliveryNote || "";
+
+    // Stop the clock — folds the current running session into timeSpentMs.
+    stopTimer(task);
 
     if (!task.startedAt) {
       task.startedAt = new Date().toISOString();

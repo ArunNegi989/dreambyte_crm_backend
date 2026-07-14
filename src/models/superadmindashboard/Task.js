@@ -128,7 +128,10 @@ const taskSchema = new mongoose.Schema(
       ],
       default: [],
     },
-    
+    startedAt:               { type: String, default: null }, // first-ever start (legacy/display)
+deliveredAt:             { type: String, default: null },
+timeSpentMs:             { type: Number, default: 0 },     // cumulative worked time, across all sessions
+currentSessionStartedAt: { type: String, default: null },
   },
   { timestamps: true }
 );
