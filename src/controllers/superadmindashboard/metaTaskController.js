@@ -26,6 +26,9 @@ function toFrontendTask(task) {
     rejectRemark: task.rejectRemark || "",
     startedAt: task.startedAt || "",
     deliveredAt: task.deliveredAt || "",
+    // ── Pause/resume timer ─────────────────────────────────────────────
+    timeSpentMs: task.timeSpentMs || 0,
+    currentSessionStartedAt: task.currentSessionStartedAt || null,
     changes: (task.changes || []).map((c) => ({
       _id: c._id.toString(),
       changedBy: c.changedBy,

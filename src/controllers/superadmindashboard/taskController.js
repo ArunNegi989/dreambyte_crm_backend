@@ -314,6 +314,15 @@ exports.startTask = async (req, res) => {
       if (!task.startedAt) task.startedAt = task.currentSessionStartedAt;
 
       if (task.status === "pending") task.status = "in_progress";
+
+      // ── FIX: clear any stale deliveredAt left over from a previous
+      // completion/rejection cycle. "Time taken" is computed as
+      // startedAt -> deliveredAt on every dashboard (Designer, SMM, Meta,
+      // Photography, Employee) — without clearing this, the OLD
+      // deliveredAt gets treated as the "end" of the timer, so the number
+      // stays frozen instead of ticking live even though
+      // currentSessionStartedAt is now set.
+      task.deliveredAt = null;
     }
 
     await task.save();
