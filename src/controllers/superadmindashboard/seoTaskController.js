@@ -11,13 +11,29 @@ function resolveCategory(taskType = "") {
   return CATEGORY_VALUES.byLabel[taskType] || taskType;
 }
 
+// ── Stop the running timer (if any) and fold elapsed time into the total ──
+// Same helper as the main Taskcontroller.js's stopTimer — mirrored here so
+// SEO tasks accumulate timeSpentMs the exact same pause-aware way. Safe to
+// call even if the timer isn't running (no-op).
+function stopTimer(task) {
+  if (task.currentSessionStartedAt) {
+    const elapsed = Date.now() - new Date(task.currentSessionStartedAt).getTime();
+    if (elapsed > 0) task.timeSpentMs = (task.timeSpentMs || 0) + elapsed;
+    task.currentSessionStartedAt = null;
+  }
+}
+
 // NOTE: this file previously defined toFrontendTask() twice — the second
 // definition silently shadowed the first at runtime (function hoisting),
 // so the first one's shape never actually mattered. Merged into one here,
-// keeping the rejectRemark/changes fields from the second version, and
-// adding startedAt/deliveredAt which were missing from BOTH — that's why
-// "time taken" never showed up on the frontend no matter what the backend
-// computed.
+// keeping the rejectRemark/changes fields from the second version.
+//
+// THE FIX: timeSpentMs and currentSessionStartedAt were missing from this
+// output entirely — even though the shared Task model has both fields and
+// the frontend's getTimeTakenLabel() reads exactly these two. Without
+// them making it into the API response, no amount of frontend fixing
+// could ever show a correct "time taken" for an SEO task. That was the
+// actual root cause, not just a frontend formula bug.
 function toFrontendTask(task) {
   const brand = task.brandId;
   return {
@@ -44,9 +60,12 @@ function toFrontendTask(task) {
       resolved: c.resolved,
       employeeResponse: c.employeeResponse || "",
     })),
-    // ── Time tracking — was missing entirely before ──────────────────
+    // ── Time tracking (display-only timestamps) ───────────────────────
     startedAt: task.startedAt || null,
     deliveredAt: task.deliveredAt || null,
+    // ── Time tracking (actual source of truth — was missing before) ───
+    timeSpentMs: task.timeSpentMs || 0,
+    currentSessionStartedAt: task.currentSessionStartedAt || null,
   };
 }
 
@@ -118,6 +137,20 @@ exports.getDashboardStats = async (req, res) => {
   }
 };
 
+// ── Generic detail/status editor ──────────────────────────────────────────
+// THE FIX: this used to run on EVERY save regardless of what changed —
+// stamping submittedAt the first time ANY field was touched, and pushing a
+// changes[] log entry unconditionally (even for what was previously the
+// "Start Task" click, since that also routed through here as a plain
+// status PUT). That's now handled by the dedicated startTask/submitTask
+// endpoints below instead, which is also what actually stamps
+// currentSessionStartedAt / timeSpentMs correctly. This endpoint is kept
+// only for editing category detail fields or remarks WITHOUT touching
+// status or the timer (e.g. an admin correcting a submitted task's data) —
+// it deliberately no longer touches startedAt, submittedAt, deliveredAt,
+// or timeSpentMs, and no longer auto-logs a change entry, since doing so
+// on a save that isn't actually a start/submit was the source of the
+// original "time taken" bug.
 exports.updateTaskWork = async (req, res) => {
   try {
     const { id } = req.params;
@@ -126,52 +159,95 @@ exports.updateTaskWork = async (req, res) => {
     const task = await Task.findById(id);
     if (!task) return res.status(404).json({ success: false, message: "Task not found" });
 
-    const now = new Date().toISOString();
-
-    if (status) task.status = status;
+    if (status && status !== task.status) task.status = status;
     if (details !== undefined) task.seoDetails = { ...(task.seoDetails || {}), ...details };
+    if (remarks !== undefined) task.remarks = remarks;
 
-    // ── Time tracking ────────────────────────────────────────────────
-    // Stamp startedAt the very first time this task moves into
-    // "in_progress" — this is what the "Start Task" button triggers.
-    // Never overwritten on later saves, so it anchors the timer.
-    if (status === "in_progress" && !task.startedAt) {
-      task.startedAt = now;
+    await task.save();
+    await task.populate("brandId", "name");
+    res.json({ success: true, data: toFrontendTask(task) });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ── START / RESUME (employee clicks "Start Task" or "Resume Task") ────────
+// Mirrors the main Taskcontroller.js's startTask exactly: one endpoint
+// handles both a fresh start (pending -> in_progress) and a resume
+// (rejected — status left AS-IS so the rejection banner + change log keep
+// showing until the employee actually resubmits). Idempotent: calling it
+// again while the timer's already running is a no-op.
+exports.startTask = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const task = await Task.findById(id);
+    if (!task) return res.status(404).json({ success: false, message: "Task not found" });
+
+    if (!task.currentSessionStartedAt) {
+      task.currentSessionStartedAt = new Date().toISOString();
+      if (!task.startedAt) task.startedAt = task.currentSessionStartedAt;
+
+      if (task.status === "pending") task.status = "in_progress";
+
+      // Clear any stale deliveredAt left over from a previous cycle —
+      // without this, "time taken" would freeze on the OLD deliveredAt
+      // instead of ticking live, even though the timer is now running.
+      task.deliveredAt = null;
     }
 
+    await task.save();
+    await task.populate("brandId", "name");
+    res.json({ success: true, message: "Task started", data: toFrontendTask(task) });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ── SUBMIT FOR REVIEW ──────────────────────────────────────────────────────
+// Saves whatever category detail fields were filled in, stops the running
+// timer (folding the session into timeSpentMs), and moves status ->
+// completed. Replaces the old "set status via dropdown" flow entirely —
+// submitting always means "done, sent for review."
+exports.submitTask = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { remarks, details } = req.body;
+
+    const task = await Task.findById(id);
+    if (!task) return res.status(404).json({ success: false, message: "Task not found" });
+
+    if (details !== undefined) task.seoDetails = { ...(task.seoDetails || {}), ...details };
+
+    // Stop the clock — folds the current running session into timeSpentMs.
+    // No-op if the employee never clicked Start/Resume (shouldn't normally
+    // happen since the frontend only shows Submit once started).
+    stopTimer(task);
+
+    const now = new Date().toISOString();
     task.remarks = remarks || "";
     if (!task.submittedAt) task.submittedAt = now;
 
-    // ── Delivery / completion ────────────────────────────────────────
-    // Previously this block ran unconditionally on EVERY save (including
-    // "Start Task" clicks), stamping deliveryStatus="delivered" and
-    // deliveredAt immediately — which zeroed out the timer the instant a
-    // task was started. Now it only fires when the task is actually
-    // completed, so deliveredAt genuinely marks the end of work.
-    if (status === "completed") {
-      task.completedAt = now;
-      task.deliveryStatus = "delivered";
-      task.deliveryNote = remarks || task.deliveryNote;
-      task.deliveredAt = task.deliveredAt || now;
-    }
+    task.status = "completed";
+    task.completedAt = now;
+    task.deliveryStatus = "delivered";
+    task.deliveryNote = remarks || task.deliveryNote;
+    task.deliveredAt = now;
+    // Clear any stale rejection banner now that this is a fresh submission.
+    task.rejectRemark = "";
 
-    // ── Make the employee's comment visible to superadmin ───────────────
-    // Superadmin only ever reads `changes[]`, so every submission needs an
-    // entry here — even if remarks is empty, so there's a record of the
-    // status change itself.
+    // Log entry is resolved: true — this is a history record of the
+    // employee's own submission, NOT an open note waiting for a reply.
     task.changes.push({
       changedBy: "Employee",
-      note: remarks?.trim()
-        ? remarks
-        : `Marked as "${status}" with no additional remarks.`,
+      note: remarks?.trim() ? `Task submitted. Note: ${remarks}` : "Task submitted.",
       changedAt: now,
-      resolved: false,
+      resolved: true,
       employeeResponse: "",
     });
 
     await task.save();
     await task.populate("brandId", "name");
-    res.json({ success: true, data: toFrontendTask(task) });
+    res.json({ success: true, message: "Task submitted successfully", data: toFrontendTask(task) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -190,6 +266,19 @@ exports.respondToChange = async (req, res) => {
 
     change.employeeResponse = response;
     change.resolved = true;
+
+    // ── FIX: replying to a rejection note is also a resubmission —
+    // mirrors the main Taskcontroller.js's respondToChanges. Previously
+    // this only resolved the note and left status/timer untouched, so a
+    // task could sit "rejected" forever even after being fully replied
+    // to, and the timer (if running) was never stopped/folded in.
+    stopTimer(task);
+
+    const now = new Date().toISOString();
+    task.deliveryStatus = "delivered";
+    task.deliveredAt = now;
+    task.status = "completed";
+    task.rejectRemark = ""; // clear stale rejection banner now that it's addressed
 
     await task.save();
     await task.populate("brandId", "name");
